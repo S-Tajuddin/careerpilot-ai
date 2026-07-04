@@ -55,7 +55,8 @@ class Settings(BaseSettings):
     adzuna_app_key: Optional[str] = None
 
     # --- Company Research ---
-    serper_api_key: Optional[str] = None
+    # No separate SERP API needed — Gemini Flash handles company research
+    # (built-in web knowledge, free 500 RPD, already configured above)
 
     # --- Notifications ---
     telegram_bot_token: Optional[str] = None

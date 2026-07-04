@@ -47,9 +47,10 @@ app.add_middleware(
 )
 
 # ── Register Routers ──
-from app.routers import profile, jobs, applications, health  # noqa: E402
+from app.routers import profile, jobs, applications, health, company  # noqa: E402
 
 app.include_router(health.router, tags=["Health"])
 app.include_router(profile.router, prefix="/api/profile", tags=["Profile"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
 app.include_router(applications.router, prefix="/api/applications", tags=["Applications"])
+app.include_router(company.router, prefix="/api/company", tags=["Company Research"])
