@@ -196,7 +196,11 @@ class JobService:
             print(f"  Auto-score error: {e}")
 
     async def _auto_dedup(self, job_ids: list[int], db: Session):
-        """Run deduplication on newly saved jobs."""
+        """
+        Quick heuristic dedup on new jobs — NO embedding calls.
+        Only checks title+company overlap. Fast.
+        Full semantic dedup can be triggered manually via POST /api/jobs/dedup.
+        """
         if not job_ids:
             return
 
@@ -208,12 +212,10 @@ class JobService:
                 if not job:
                     continue
 
-                canonical_id = await dedup_service.dedup_new_job(job, db)
-                if canonical_id:
-                    job.canonical_job_id = canonical_id
-                    job.is_active = False
-                    db.commit()
-                    print(f"  🔄 Duplicate: {job.title} → canonical #{canonical_id}")
+                # Use only heuristic dedup (no embeddings)
+                is_dup = dedup_service.heuristic_dedup(job, db)
+                if is_dup:
+                    print(f"  🔄 Duplicate (heuristic): {job.title} @ {job.company_name}")
 
         except ImportError:
             print("  Dedup service not available — skipping")
