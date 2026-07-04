@@ -1,14 +1,21 @@
 """
-CareerPilot AI — JSearch Connector
-Uses JSearch API to search jobs from Google for Jobs
-which aggregates LinkedIn, Indeed, Naukri, Glassdoor, etc.
-Free tier: 200 requests/month.
+CareerPilot AI — JSearch Connector (OpenWeb Ninja Direct)
+Primary job source — searches Google for Jobs which aggregates
+LinkedIn, Indeed, Naukri, Glassdoor, ZipRecruiter, etc.
 
-Updated 2026-07: JSearch API changed endpoints:
-  - Old: /search (DEPRECATED — returns "Endpoint does not exist")
-  - New: /search-v2 (with cursor-based pagination)
-  - Job details: /job-details
-  - Also available directly at api.openwebninja.com (avoids RapidAPI data limits)
+Access: Direct via OpenWeb Ninja API (preferred)
+  Base URL: https://api.openwebninja.com/jsearch
+  Auth: x-api-key header
+  Free tier: 200 requests/month, 1000 req/hour
+
+Fallback: RapidAPI
+  Base URL: https://jsearch.p.rapidapi.com
+  Auth: X-RapidAPI-Key + X-RapidAPI-Host headers
+
+Endpoints (as of 2026):
+  /search-v2       — Search jobs (cursor-based pagination)
+  /job-details     — Get single job by job_id
+  /estimated-salary — Salary estimates by title + location
 """
 
 from datetime import datetime
@@ -22,45 +29,56 @@ from app.connectors.base import BaseConnector, NormalizedJob
 
 class JSearchConnector(BaseConnector):
     """
-    JSearch API connector — the primary job source.
-    Aggregates from: LinkedIn, Indeed, Naukri, Glassdoor, ZipRecruiter, etc.
-    via Google for Jobs index.
+    JSearch API connector — the primary job source for CareerPilot AI.
 
-    Two access methods:
-    1. Via RapidAPI: jsearch.p.rapidapi.com (X-RapidAPI-Key header)
-    2. Direct via OpenWeb Ninja: api.openwebninja.com (x-api-key header)
+    Uses OpenWeb Ninja direct access (no RapidAPI middleman).
+    Falls back to RapidAPI if only RAPIDAPI_KEY is configured.
 
-    Endpoints (as of 2026):
-    - /search-v2    — Search jobs (cursor-based pagination, recommended)
-    - /job-details  — Get single job by job_id
-    - /estimated-salary — Salary estimates by title + location
+    Enriched mode (enrich=true) returns:
+    - required_technologies, preferred_technologies
+    - seniority_level, work_arrangement
+    - required_experience_years
+    - soft_skills, methodologies, benefits_extended
+    - employer_reviews
     """
 
     def __init__(self):
         super().__init__()
         self.source_name = "jsearch"
 
-        # Determine access method based on config
-        if settings.rapidapi_key and not settings.jsearch_direct_key:
-            # RapidAPI mode
+        # Resolve the API key — prefer direct key over RapidAPI
+        direct_key = settings.jsearch_api_key or settings.jsearch_direct_key
+        rapidapi_key = settings.rapidapi_key
+
+        if direct_key:
+            # ── PRIMARY: OpenWeb Ninja direct access ──
+            self.base_url = settings.jsearch_base_url
+            self.headers = {
+                "x-api-key": direct_key,
+            }
+            self._mode = "direct"
+        elif rapidapi_key:
+            # ── FALLBACK: RapidAPI access ──
             self.base_url = f"https://{settings.jsearch_host}"
             self.headers = {
-                "X-RapidAPI-Key": settings.rapidapi_key or "",
+                "X-RapidAPI-Key": rapidapi_key,
                 "X-RapidAPI-Host": settings.jsearch_host,
             }
             self._mode = "rapidapi"
         else:
-            # Direct OpenWeb Ninja mode (preferred)
-            self.base_url = "https://api.openwebninja.com/jsearch"
-            self.headers = {
-                "x-api-key": settings.jsearch_direct_key or settings.rapidapi_key or "",
-            }
-            self._mode = "direct"
+            # No key configured
+            self.base_url = settings.jsearch_base_url
+            self.headers = {}
+            self._mode = "none"
+
+    @property
+    def is_configured(self) -> bool:
+        """Check if any API key is available."""
+        return self._mode != "none"
 
     async def authenticate(self) -> bool:
         """Verify API key works by making a minimal search request."""
-        key = settings.rapidapi_key or settings.jsearch_direct_key
-        if not key:
+        if not self.is_configured:
             return False
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
@@ -85,15 +103,17 @@ class JSearchConnector(BaseConnector):
         """
         Search JSearch for jobs using /search-v2 endpoint.
 
-        JSearch uses Google for Jobs syntax:
-        - query: "AEM developer in Hyderabad" or "AEM developer"
-        - location is appended to query for best results
+        Best practice: include location in the query, e.g.
+        "AEM developer in Hyderabad" instead of just "AEM developer"
+
+        For India jobs, always set country=in.
+        For remote jobs, use work_from_home=true.
+        To filter by publisher: add "via linkedin" to query.
         """
-        key = settings.rapidapi_key or settings.jsearch_direct_key
-        if not key:
+        if not self.is_configured:
             return []
 
-        # Build search query — JSearch works best with "query in location" format
+        # Build search query — JSearch works best with "query in location"
         search_query = query
         if location and not remote_only:
             search_query = f"{query} in {location}"
@@ -103,7 +123,7 @@ class JSearchConnector(BaseConnector):
         params = {
             "query": search_query,
             "country": country,
-            "num_pages": 1,  # First page only (up to 10 jobs per page)
+            "num_pages": 1,
         }
 
         # Optional filters
@@ -131,8 +151,12 @@ class JSearchConnector(BaseConnector):
                         params=params,
                     )
 
+                    if resp.status_code == 429:
+                        print("JSearch rate limit hit — slowing down")
+                        break
+
                     if resp.status_code != 200:
-                        print(f"JSearch API error: {resp.status_code} — {resp.text[:200]}")
+                        print(f"JSearch API error: {resp.status_code} — {resp.text[:300]}")
                         break
 
                     data = resp.json()
@@ -146,7 +170,7 @@ class JSearchConnector(BaseConnector):
                             print(f"JSearch normalize error: {e}")
                             continue
 
-                    # Check if there are more results
+                    # Check for more pages via cursor
                     next_cursor = data.get("next_cursor") or data.get("cursor")
                     if not next_cursor or len(all_jobs) >= max_results:
                         break
@@ -154,29 +178,26 @@ class JSearchConnector(BaseConnector):
 
         except httpx.HTTPStatusError as e:
             print(f"JSearch API error: {e.response.status_code} — {e.response.text[:200]}")
-        except httpx.RequestError as e:
-            print(f"JSearch request error: {e}")
+        except httpx.ConnectError as e:
+            print(f"JSearch connection error: {e}")
+        except httpx.TimeoutException:
+            print("JSearch request timed out")
         except Exception as e:
             print(f"JSearch unexpected error: {e}")
 
         return all_jobs[:max_results]
 
-    async def get_job(self, source_id: str) -> Optional[NormalizedJob]:
+    async def get_job(self, source_id: str, country: str = "in") -> Optional[NormalizedJob]:
         """Get a single job by JSearch job_id."""
-        key = settings.rapidapi_key or settings.jsearch_direct_key
-        if not key:
+        if not self.is_configured:
             return None
 
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                params = {
-                    "job_id": source_id,
-                    "country": "in",
-                }
                 resp = await client.get(
                     f"{self.base_url}/job-details",
                     headers=self.headers,
-                    params=params,
+                    params={"job_id": source_id, "country": country},
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -193,20 +214,20 @@ class JSearchConnector(BaseConnector):
         """
         Convert JSearch API response to NormalizedJob.
 
-        Handles both old format and new enriched format (2026):
-        - Core fields: job_id, employer_name, job_title, job_city, etc.
-        - Enriched fields: required_technologies, preferred_technologies,
-          seniority_level, work_arrangement, required_experience_years,
-          soft_skills, methodologies, benefits_extended, industry, job_function
+        Handles both standard and enriched format (2026):
+        Standard: job_id, employer_name, job_title, job_city, etc.
+        Enriched: + required_technologies, preferred_technologies,
+                  seniority_level, work_arrangement, required_experience_years,
+                  soft_skills, methodologies, benefits_extended, industry
         """
-        # Salary parsing
+        # ── Salary parsing ──
         salary_min = raw_job.get("job_min_salary")
         salary_max = raw_job.get("job_max_salary")
         salary_currency = raw_job.get("job_salary_currency") or "INR"
         salary_period = raw_job.get("job_salary_period") or "YEAR"
 
-        # Normalize salary period
-        salary_period_lower = salary_period.lower().strip()
+        # Normalize salary period to our standard
+        salary_period_lower = str(salary_period).lower().strip()
         if salary_period_lower in ("month", "monthly"):
             salary_period = "monthly"
         elif salary_period_lower in ("year", "yearly", "annually"):
@@ -214,7 +235,7 @@ class JSearchConnector(BaseConnector):
         elif salary_period_lower in ("hour", "hourly"):
             salary_period = "hourly"
 
-        # If monthly salary in INR, convert to yearly
+        # Convert monthly INR to yearly
         if salary_currency == "INR" and salary_period == "monthly":
             if salary_min:
                 salary_min = salary_min * 12
@@ -222,23 +243,23 @@ class JSearchConnector(BaseConnector):
                 salary_max = salary_max * 12
             salary_period = "yearly"
 
-        # Location
+        # ── Location ──
         city = raw_job.get("job_city", "") or ""
         state = raw_job.get("job_state", "") or ""
         country = raw_job.get("job_country", "") or ""
         location_parts = [p for p in [city, state, country] if p]
         location = ", ".join(location_parts) if location_parts else None
 
-        # Is remote — check both old and new fields
+        # ── Remote detection ──
         is_remote = bool(raw_job.get("job_is_remote", False))
         work_arrangement = raw_job.get("work_arrangement", "")
         if work_arrangement == "remote":
             is_remote = True
 
-        # Posted date
+        # ── Posted date ──
         posted_date = raw_job.get("job_posted_at_datetime_utc")
 
-        # Employment type — check both old and new formats
+        # ── Employment type ──
         job_type_raw = raw_job.get("job_employment_type", "")
         if not job_type_raw:
             job_types = raw_job.get("job_employment_types", [])
@@ -246,7 +267,7 @@ class JSearchConnector(BaseConnector):
                 job_type_raw = job_types[0]
         job_type = self._normalize_job_type(str(job_type_raw))
 
-        # Skills — prioritize enriched fields, fall back to job_highlights
+        # ── Skills (enriched > legacy > fallback) ──
         skills = []
         required_techs = raw_job.get("required_technologies", [])
         preferred_techs = raw_job.get("preferred_technologies", [])
@@ -255,7 +276,7 @@ class JSearchConnector(BaseConnector):
         if preferred_techs:
             skills.extend(preferred_techs)
 
-        # Fallback: try job_required_skills
+        # Fallback: legacy job_required_skills
         if not skills:
             raw_skills = raw_job.get("job_required_skills") or []
             if isinstance(raw_skills, str):
@@ -263,14 +284,7 @@ class JSearchConnector(BaseConnector):
             elif isinstance(raw_skills, list):
                 skills = raw_skills
 
-        # Fallback: extract from job_highlights.Qualifications
-        if not skills:
-            highlights = raw_job.get("job_highlights", {})
-            if isinstance(highlights, dict):
-                qualifications = highlights.get("Qualifications", [])
-                # These are long sentences, not skill names — skip
-
-        # Experience — prefer enriched field
+        # ── Experience ──
         experience = None
         exp_years = raw_job.get("required_experience_years")
         if exp_years:
@@ -282,11 +296,8 @@ class JSearchConnector(BaseConnector):
                 if months:
                     experience = f"{int(months) // 12} years"
 
-        # Description
+        # ── Description ──
         description = raw_job.get("job_description", "")
-
-        # Seniority level (enriched)
-        seniority = raw_job.get("seniority_level")
 
         return NormalizedJob(
             source="jsearch",
@@ -310,16 +321,19 @@ class JSearchConnector(BaseConnector):
 
     async def health_check(self) -> dict:
         """Check if JSearch API is accessible."""
-        key = settings.rapidapi_key or settings.jsearch_direct_key
-        if not key:
-            return {"status": "error", "details": "No API key configured (RAPIDAPI_KEY or JSEARCH_DIRECT_KEY)"}
+        if not self.is_configured:
+            return {"status": "error", "details": "No JSearch API key configured. Set JSEARCH_API_KEY in .env"}
 
         try:
             is_authed = await self.authenticate()
             if is_authed:
-                return {"status": "ok", "details": f"JSearch API accessible (mode: {self._mode})"}
+                return {
+                    "status": "ok",
+                    "details": f"JSearch API accessible (mode: {self._mode})",
+                    "mode": self._mode,
+                }
             else:
-                return {"status": "error", "details": "Authentication failed — check your API key"}
+                return {"status": "error", "details": f"Authentication failed (mode: {self._mode}) — check your API key"}
         except Exception as e:
             return {"status": "error", "details": str(e)}
 

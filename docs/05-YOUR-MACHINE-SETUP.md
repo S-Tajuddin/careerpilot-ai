@@ -362,19 +362,35 @@ git config user.email "your.email@gmail.com"
 
 These are the online accounts you need. Do them in this order:
 
-### 8A. JSearch (RapidAPI) — Job Search
+### 8A. JSearch (OpenWeb Ninja Direct) — Job Search ⭐ PRIMARY
 
-1. Open: **https://rapidapi.com/open-web-ninja-open-web-ninja-default/api/jsearch**
-2. Click **"Sign Up"** (top right) → Use Google or GitHub login
-3. Click **"Pricing"** tab
-4. Click **"Subscribe"** on the **FREE** plan ($0.00/month, 200 requests)
-5. Click **"Endpoints"** tab
-6. Look for **"X-RapidAPI-Key"** on the right side → **Copy it**
+> **Why direct instead of RapidAPI?** Same API, same data, but no middleman.
+> Simpler auth, no RapidAPI data limits, cleaner integration.
+
+1. Open: **https://app.openwebninja.com/api/jsearch**
+2. Click **"Sign Up"** → Use Google or email login (no credit card)
+3. Click **"Subscribe"** on the **Free** plan ($0.00/month, 200 requests)
+4. After subscribing, you'll see your **API Key** on the dashboard → **Copy it**
 
 Save it somewhere:
 ```
-RAPIDAPI_KEY=your-key-here
+JSEARCH_API_KEY=your-key-here
 ```
+
+#### Test it works (PowerShell):
+
+```powershell
+$headers = @{
+    "x-api-key" = "YOUR_KEY_HERE"
+}
+
+Invoke-RestMethod -Uri "https://api.openwebninja.com/jsearch/search-v2?query=AEM+developer+in+Hyderabad&country=in&num_pages=1&enrich=true" -Headers $headers
+```
+
+You should see JSON with job listings from LinkedIn, Indeed, Naukri, etc.
+
+> ⚠️ If you already have a RapidAPI key, it will still work as fallback.
+> But going forward, use the direct key — it's better.
 
 ### 8B. Google Gemini — LLM for Resume/Cover Letters
 

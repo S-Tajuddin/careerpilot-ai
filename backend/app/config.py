@@ -41,9 +41,16 @@ class Settings(BaseSettings):
     google_api_key: Optional[str] = None
 
     # --- Job Search APIs ---
+    # JSearch via OpenWeb Ninja (DIRECT — primary method)
+    jsearch_api_key: Optional[str] = None          # Get from: https://app.openwebninja.com/api/jsearch
+    jsearch_base_url: str = "https://api.openwebninja.com/jsearch"
+
+    # Legacy: RapidAPI access (fallback only)
     rapidapi_key: Optional[str] = None
     jsearch_host: str = "jsearch.p.rapidapi.com"
-    jsearch_direct_key: Optional[str] = None  # Direct OpenWeb Ninja key (preferred over RapidAPI)
+    jsearch_direct_key: Optional[str] = None       # Alias → maps to jsearch_api_key
+
+    # Adzuna
     adzuna_app_id: Optional[str] = None
     adzuna_app_key: Optional[str] = None
 
