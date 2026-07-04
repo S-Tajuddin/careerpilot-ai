@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     # --- Job Search APIs ---
     rapidapi_key: Optional[str] = None
     jsearch_host: str = "jsearch.p.rapidapi.com"
+    jsearch_direct_key: Optional[str] = None  # Direct OpenWeb Ninja key (preferred over RapidAPI)
     adzuna_app_id: Optional[str] = None
     adzuna_app_key: Optional[str] = None
 

@@ -363,9 +363,10 @@ class TestJSearchConnector:
             "job_min_salary": 1800000,
             "job_max_salary": 2500000,
             "job_salary_currency": "INR",
-            "job_salary_period": "yearly",
+            "job_salary_period": "YEAR",
             "job_is_remote": False,
-            "job_employment_type": "FULL_TIME",
+            "job_employment_type": "Full-time",
+            "job_employment_types": ["FULLTIME"],
             "job_posted_at_datetime_utc": "2026-07-01T10:00:00",
         }
 
@@ -379,6 +380,37 @@ class TestJSearchConnector:
         assert result.salary_currency == "INR"
         assert result.is_remote is False
         assert result.job_type == "full_time"
+
+    def test_normalize_enriched_response(self):
+        """Test JSearch v2 enriched response with skills, seniority, etc."""
+        from app.connectors.jsearch import JSearchConnector
+        connector = JSearchConnector()
+
+        raw = {
+            "job_id": "xyz789",
+            "job_title": "AEM Architect",
+            "employer_name": "Adobe",
+            "job_city": "Remote",
+            "job_country": "IN",
+            "job_description": "Lead AEM architecture...",
+            "job_apply_link": "https://example.com/apply2",
+            "job_min_salary": 2500000,
+            "job_max_salary": 4000000,
+            "job_salary_currency": "INR",
+            "job_salary_period": "YEAR",
+            "work_arrangement": "remote",
+            "job_employment_types": ["FULLTIME"],
+            "required_technologies": ["AEM", "Sling", "OSGi", "JCR"],
+            "preferred_technologies": ["AEM Dispatcher", "EDS"],
+            "seniority_level": "senior",
+            "required_experience_years": 10,
+        }
+
+        result = connector.normalize(raw)
+        assert result.is_remote is True  # work_arrangement="remote"
+        assert "AEM" in result.skills_required
+        assert "AEM Dispatcher" in result.skills_required  # preferred included
+        assert result.experience_required == "10 years"
 
     def test_normalize_monthly_to_yearly(self):
         from app.connectors.jsearch import JSearchConnector
