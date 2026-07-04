@@ -37,6 +37,23 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+
+@app.get("/")
+async def root():
+    """Root redirect — points to Swagger docs."""
+    return {
+        "app": "CareerPilot AI",
+        "version": "0.1.0",
+        "docs": "/docs",
+        "health": "/health",
+        "endpoints": {
+            "profile": "/api/profile",
+            "jobs": "/api/jobs",
+            "applications": "/api/applications",
+            "company": "/api/company",
+        },
+    }
+
 # CORS — allow the Next.js frontend (personal tool, open CORS is fine)
 app.add_middleware(
     CORSMiddleware,

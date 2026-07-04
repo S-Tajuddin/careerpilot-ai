@@ -224,23 +224,74 @@ async def search_jobs_post(request: JobSearchRequest, db: Session = Depends(get_
 
 
 @router.post("/score", response_model=JobResponse)
-def score_job(request: JobScoreRequest, db: Session = Depends(get_db)):
+async def score_job(request: JobScoreRequest, db: Session = Depends(get_db)):
     """
-    Score a job against the user profile using AI.
-    Uses Ollama (background) or Gemini (interactive).
+    Deep score a single job — adds AI recommendations via LLM.
+    Takes ~5-15 seconds per job. For instant scoring, jobs are auto-quick-scored on search.
     """
+    from app.services.scoring import scoring_service
+    from app.models import Profile
+
     job = db.query(Job).filter(Job.id == request.job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {request.job_id} not found")
 
-    if job.match_score is not None and not request.force_rescore:
-        return _job_to_response(job)
+    profile = db.query(Profile).filter(Profile.id == 1).first()
+    if not profile:
+        raise HTTPException(status_code=400, detail="No profile found — create your profile first")
 
-    # Scoring will be implemented in Phase 2 (AI Matching pipeline)
-    raise HTTPException(
-        status_code=501,
-        detail="AI scoring not yet implemented — coming in Phase 2",
-    )
+    # Always do deep score when explicitly requested
+    result = await scoring_service.deep_score(job, profile, db)
+
+    job.match_score = result["overall_score"]
+    job.match_strengths_list = result["strengths"]
+    job.match_weaknesses_list = result["weaknesses"]
+    job.match_recommendations_list = result["recommendations"]
+    if result.get("embedding_id"):
+        job.embedding_id = result["embedding_id"]
+    job.updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    _log_activity(db, "job_deep_scored", "job", job.id, {"score": result["overall_score"]})
+    return _job_to_response(job)
+
+
+@router.post("/score/batch")
+async def score_batch_jobs(
+    mode: str = Query("quick", description="Scoring mode: 'quick' (instant) or 'deep' (with AI recommendations)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Score all unscored active jobs.
+    - mode='quick': Instant deterministic scoring (< 1ms per job)
+    - mode='deep': Full AI scoring with LLM recommendations (~5-15s per job)
+    """
+    from app.services.scoring import scoring_service
+
+    if mode == "deep":
+        stats = await scoring_service.deep_score_all_unscored(db)
+    else:
+        stats = scoring_service.quick_score_all_unscored(db)
+
+    return {
+        "message": f"{'Deep' if mode == 'deep' else 'Quick'} scored {stats['scored']}/{stats['total_unscored']} jobs",
+        **stats,
+    }
+
+
+@router.post("/dedup")
+async def dedup_jobs(db: Session = Depends(get_db)):
+    """
+    Run deduplication on active jobs.
+    Uses title+company matching + embedding similarity.
+    """
+    from app.services.dedup import dedup_service
+
+    stats = await dedup_service.dedup_jobs(db)
+    return {
+        "message": f"Found {stats['duplicates_found']} duplicates in {stats['groups_merged']} groups",
+        **stats,
+    }
 
 
 @router.get("/stats/summary")
@@ -319,6 +370,33 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
     return _job_to_response(job)
+
+
+@router.get("/{job_id}/score-detail")
+def get_job_score_detail(job_id: int, db: Session = Depends(get_db)):
+    """
+    Get detailed scoring breakdown for a job.
+    Returns overall score + 6 dimension scores + strengths/weaknesses/recommendations.
+    """
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    if job.match_score is None:
+        raise HTTPException(status_code=400, detail="Job not yet scored — POST /api/jobs/score first")
+
+    return {
+        "job_id": job.id,
+        "title": job.title,
+        "company_name": job.company_name,
+        "overall_score": job.match_score,
+        "strengths": job.match_strengths_list,
+        "weaknesses": job.match_weaknesses_list,
+        "recommendations": job.match_recommendations_list,
+        "salary_display": job.salary_display(),
+        "is_remote": job.is_remote,
+        "location": job.location,
+    }
 
 
 @router.delete("/{job_id}", response_model=MessageResponse)

@@ -13,6 +13,7 @@ import {
   HiOutlineChevronLeft,
   HiOutlineChevronRight,
   HiOutlineStar,
+  HiOutlineBolt,
   HiOutlineBookmark,
   HiOutlineArrowTopRightOnSquare,
 } from 'react-icons/hi2';
@@ -28,6 +29,8 @@ const QUICK_SEARCHES = [
   { label: 'Adobe Developer', query: 'Adobe developer', location: 'Hyderabad India' },
 ];
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
 export default function JobsPage() {
   const [jobs, setJobs] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
@@ -39,6 +42,8 @@ export default function JobsPage() {
   const [datePosted, setDatePosted] = useState('');
   const [sortBy, setSortBy] = useState('created_at');
   const [selectedJob, setSelectedJob] = useState<any>(null);
+  const [scoringAll, setScoringAll] = useState(false);
+  const [scoreDetail, setScoreDetail] = useState<any>(null);
 
   useEffect(() => {
     loadSavedJobs();
@@ -96,6 +101,49 @@ export default function JobsPage() {
     }
   }
 
+  async function handleScoreAll(mode: 'quick' | 'deep' = 'quick') {
+    setScoringAll(true);
+    try {
+      const res = await fetch(`${API_URL}/api/jobs/score/batch?mode=${mode}`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Scoring failed');
+      toast.success(data.message || 'Scoring complete');
+      loadSavedJobs();
+    } catch (e: any) {
+      toast.error(e.message || 'Scoring failed');
+    } finally {
+      setScoringAll(false);
+    }
+  }
+
+  async function handleScoreSingle(jobId: number) {
+    try {
+      const res = await fetch(`${API_URL}/api/jobs/score`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: jobId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Scoring failed');
+      toast.success(`Scored: ${data.match_score}%`);
+      // Update job in list
+      setJobs(prev => prev.map(j => j.id === jobId ? { ...j, match_score: data.match_score, match_strengths: data.match_strengths, match_weaknesses: data.match_weaknesses, match_recommendations: data.match_recommendations } : j));
+    } catch (e: any) {
+      toast.error(e.message || 'Scoring failed');
+    }
+  }
+
+  async function handleViewScoreDetail(jobId: number) {
+    try {
+      const res = await fetch(`${API_URL}/api/jobs/${jobId}/score-detail`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to load score detail');
+      setScoreDetail(data);
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to load score detail');
+    }
+  }
+
   function scoreBadge(score: number | null) {
     if (score == null) return null;
     const cls = score >= 75 ? 'bg-emerald-400/10 text-emerald-400 ring-emerald-400/20' :
@@ -109,9 +157,37 @@ export default function JobsPage() {
   return (
     <div className="p-6 space-y-6 max-w-[1400px]">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-white">Job Search</h1>
-        <p className="text-sm text-slate-400 mt-0.5">Search across JSearch + Adzuna for AEM/EDS roles</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Job Search</h1>
+          <p className="text-sm text-slate-400 mt-0.5">Search across JSearch + Adzuna for AEM/EDS roles</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => handleScoreAll('quick')}
+            disabled={scoringAll}
+            className="btn-secondary flex items-center gap-2 text-xs"
+            title="Instant deterministic scoring — no AI calls"
+          >
+            {scoringAll ? (
+              <><HiOutlineArrowPath className="w-4 h-4 animate-spin" /> Scoring...</>
+            ) : (
+              <><HiOutlineStar className="w-4 h-4" /> ⚡ Score All</>
+            )}
+          </button>
+          <button
+            onClick={() => handleScoreAll('deep')}
+            disabled={scoringAll}
+            className="btn-primary flex items-center gap-2 text-xs"
+            title="Full AI analysis with recommendations — slower"
+          >
+            {scoringAll ? (
+              <><HiOutlineArrowPath className="w-4 h-4 animate-spin" /> Scoring...</>
+            ) : (
+              <><HiOutlineBolt className="w-4 h-4" /> 🧠 Deep Score</>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Search Bar */}
@@ -289,7 +365,7 @@ export default function JobsPage() {
 
                   {/* Expanded detail */}
                   {selectedJob?.id === job.id && (
-                    <div className="mt-3 pt-3 border-t border-slate-700/50 space-y-3">
+                    <div className="mt-3 pt-3 border-t border-slate-700/50 space-y-3" onClick={(e) => e.stopPropagation()}>
                       {job.description && (
                         <div className="text-xs text-slate-400 leading-relaxed max-h-40 overflow-y-auto whitespace-pre-line">
                           {job.description.slice(0, 1500)}
@@ -320,6 +396,19 @@ export default function JobsPage() {
                           </div>
                         </div>
                       )}
+                      {job.match_recommendations?.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-brand-400 mb-1">AI Recommendations</p>
+                          <ul className="space-y-1">
+                            {job.match_recommendations.map((r: string, i: number) => (
+                              <li key={i} className="text-[11px] text-slate-400 flex gap-2">
+                                <span className="text-brand-500 mt-0.5">→</span>
+                                <span>{r}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       <div className="flex gap-2">
                         {job.source_url && (
                           <a
@@ -327,10 +416,24 @@ export default function JobsPage() {
                             target="_blank"
                             rel="noopener noreferrer"
                             className="btn-primary text-xs flex items-center gap-1"
-                            onClick={(e) => e.stopPropagation()}
                           >
                             <HiOutlineArrowTopRightOnSquare className="w-3.5 h-3.5" /> Apply on {job.source}
                           </a>
+                        )}
+                        {job.match_score == null ? (
+                          <button
+                            onClick={() => handleScoreSingle(job.id)}
+                            className="btn-secondary text-xs flex items-center gap-1"
+                          >
+                            <HiOutlineStar className="w-3.5 h-3.5" /> 🧠 AI Analyze
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleViewScoreDetail(job.id)}
+                            className="btn-secondary text-xs flex items-center gap-1"
+                          >
+                            <HiOutlineStar className="w-3.5 h-3.5" /> Score Detail
+                          </button>
                         )}
                         <button className="btn-secondary text-xs flex items-center gap-1">
                           <HiOutlineBookmark className="w-3.5 h-3.5" /> Save
@@ -363,6 +466,79 @@ export default function JobsPage() {
           >
             Next <HiOutlineChevronRight className="w-4 h-4" />
           </button>
+        </div>
+      )}
+
+      {/* Score Detail Modal */}
+      {scoreDetail && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setScoreDetail(null)}>
+          <div className="glass-card p-6 w-full max-w-lg space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-white">{scoreDetail.title}</h2>
+                <p className="text-sm text-slate-400">{scoreDetail.company_name} · {scoreDetail.location || 'Remote'}</p>
+              </div>
+              <button onClick={() => setScoreDetail(null)} className="text-slate-500 hover:text-slate-300 text-xl">×</button>
+            </div>
+
+            {/* Overall Score */}
+            <div className="flex items-center gap-4">
+              <div className={`w-20 h-20 rounded-full flex items-center justify-center border-4 ${
+                scoreDetail.overall_score >= 75 ? 'border-emerald-400 bg-emerald-400/10' :
+                scoreDetail.overall_score >= 50 ? 'border-amber-400 bg-amber-400/10' :
+                'border-slate-400 bg-slate-400/10'
+              }`}>
+                <span className={`text-2xl font-bold ${
+                  scoreDetail.overall_score >= 75 ? 'text-emerald-400' :
+                  scoreDetail.overall_score >= 50 ? 'text-amber-400' : 'text-slate-400'
+                }`}>
+                  {scoreDetail.overall_score}
+                </span>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-white">Overall Match Score</p>
+                <p className="text-xs text-slate-500 mt-0.5">Weighted across 6 dimensions</p>
+              </div>
+            </div>
+
+            {/* Strengths */}
+            {scoreDetail.strengths?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-emerald-400 mb-2">✅ Strengths</p>
+                <ul className="space-y-1">
+                  {scoreDetail.strengths.map((s: string, i: number) => (
+                    <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-emerald-500">+</span>{s}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Weaknesses */}
+            {scoreDetail.weaknesses?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-amber-400 mb-2">⚠️ Gaps</p>
+                <ul className="space-y-1">
+                  {scoreDetail.weaknesses.map((w: string, i: number) => (
+                    <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-amber-500">-</span>{w}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Recommendations */}
+            {scoreDetail.recommendations?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-brand-400 mb-2">🎯 AI Recommendations</p>
+                <ul className="space-y-1.5">
+                  {scoreDetail.recommendations.map((r: string, i: number) => (
+                    <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-brand-500">→</span>{r}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <button onClick={() => setScoreDetail(null)} className="btn-primary w-full text-sm">Close</button>
+          </div>
         </div>
       )}
     </div>
