@@ -1,0 +1,47 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# environment
+.env
+.env.local
+.env.*.local
+
+# data (local only)
+backend/data/*.db
+backend/data/chroma/
+backend/data/resumes/
+backend/data/cover_letters/
+backend/data/exports/
+
+# ollama
+.ollama/
+
+# ide
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# os
+.DS_Store
+Thumbs.db
+
+# next.js
+frontend/.next/
+frontend/out/
+
+# logs
+*.log
