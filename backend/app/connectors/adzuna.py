@@ -12,6 +12,7 @@ import httpx
 
 from app.config import settings
 from app.connectors.base import BaseConnector, NormalizedJob
+from app.utils.url_validation import sanitize_source_url
 
 
 class AdzunaConnector(BaseConnector):
@@ -172,7 +173,7 @@ class AdzunaConnector(BaseConnector):
         return NormalizedJob(
             source="adzuna",
             source_id=str(raw_job.get("id", "")),
-            source_url=raw_job.get("redirect_url", ""),
+            source_url=sanitize_source_url(raw_job.get("redirect_url", "")),
             title=raw_job.get("title", "Unknown Title"),
             company_name=company_name,
             location=location,

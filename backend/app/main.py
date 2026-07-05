@@ -22,9 +22,21 @@ async def lifespan(app: FastAPI):
     print(f"   Database: {settings.database_path}")
     print(f"   Ollama: {settings.ollama_host}")
 
+    # Start scheduler
+    try:
+        from app.services.scheduler import scheduler_service
+        scheduler_service.start()
+    except Exception as e:
+        print(f"⚠️  Scheduler failed to start: {e}")
+
     yield
 
     # ── Shutdown ──
+    try:
+        from app.services.scheduler import scheduler_service
+        scheduler_service.stop()
+    except Exception:
+        pass
     print("👋 CareerPilot AI backend shutting down")
 
 
@@ -37,6 +49,26 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+
+@app.get("/")
+async def root():
+    """Root redirect — points to Swagger docs."""
+    return {
+        "app": "CareerPilot AI",
+        "version": "0.2.0",
+        "docs": "/docs",
+        "health": "/health",
+        "endpoints": {
+            "profile": "/api/profile",
+            "jobs": "/api/jobs",
+            "applications": "/api/applications",
+            "company": "/api/company",
+            "documents": "/api/documents",
+            "scheduler": "/scheduler/status",
+            "settings": "/scheduler/settings",
+        },
+    }
+
 # CORS — allow the Next.js frontend (personal tool, open CORS is fine)
 app.add_middleware(
     CORSMiddleware,
@@ -47,10 +79,12 @@ app.add_middleware(
 )
 
 # ── Register Routers ──
-from app.routers import profile, jobs, applications, health, company  # noqa: E402
+from app.routers import profile, jobs, applications, health, company, scheduler, documents  # noqa: E402
 
 app.include_router(health.router, tags=["Health"])
 app.include_router(profile.router, prefix="/api/profile", tags=["Profile"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
 app.include_router(applications.router, prefix="/api/applications", tags=["Applications"])
 app.include_router(company.router, prefix="/api/company", tags=["Company Research"])
+app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
+app.include_router(scheduler.router, tags=["Scheduler & Settings"])
