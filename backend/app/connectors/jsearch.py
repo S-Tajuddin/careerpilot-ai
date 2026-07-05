@@ -25,6 +25,7 @@ import httpx
 
 from app.config import settings
 from app.connectors.base import BaseConnector, NormalizedJob
+from app.utils.url_validation import sanitize_source_url
 
 
 class JSearchConnector(BaseConnector):
@@ -302,7 +303,7 @@ class JSearchConnector(BaseConnector):
         return NormalizedJob(
             source="jsearch",
             source_id=raw_job.get("job_id", ""),
-            source_url=raw_job.get("job_apply_link", ""),
+            source_url=sanitize_source_url(raw_job.get("job_apply_link", "")),
             title=raw_job.get("job_title", "Unknown Title"),
             company_name=raw_job.get("employer_name", "Unknown Company"),
             location=location,
