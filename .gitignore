@@ -45,3 +45,4 @@ frontend/out/
 
 # logs
 *.log
+backend/data/careerpilot.db-*
