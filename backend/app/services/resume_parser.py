@@ -13,6 +13,7 @@ Flow:
 
 import json
 import os
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,19 @@ from sqlalchemy.orm import Session
 from app.config import settings, RESUMES_DIR
 from app.models import Profile, Job
 from app.services.llm import llm_service
+
+
+# Common AEM/tech keywords for heuristic skill extraction when LLM output is truncated
+_SKILL_KEYWORDS = [
+    "AEM", "AEM 6.5", "AEM as a Cloud Service", "AEM Cloud Service", "Adobe Experience Manager",
+    "Edge Delivery Services", "EDS", "Universal Editor", "Sling", "OSGi", "HTL", "Sightly",
+    "Dispatcher", "CQ5", "Java", "JavaScript", "TypeScript", "React", "Angular", "Node.js",
+    "Maven", "Gradle", "Git", "Jenkins", "Docker", "Kubernetes", "AWS", "Azure",
+    "JCR", "CRX", "Content Fragments", "Experience Fragments", "Core Components",
+    "GraphQL", "REST", "SOAP", "Spring", "JUnit", "Mockito", "SQL", "MySQL", "MongoDB",
+    "HTML", "CSS", "SCSS", "Tailwind", "Webpack", "npm", "CI/CD", "Agile", "Scrum",
+    "Franklin", "Adobe Analytics", "Adobe Target", "Launch", "Solr", "Elasticsearch",
+]
 
 
 class ResumeParserService:
@@ -147,10 +161,103 @@ Output ONLY the JSON object, no markdown fences, no commentary."""
             system="You are a precise resume parser. Always respond with valid JSON only. No markdown, no explanations.",
             task_type="interactive",  # Use Gemini Flash for this
             temperature=0.1,
-            max_tokens=3000,
+            max_tokens=8192,
         )
 
-        return self._parse_llm_response(response)
+        parsed = self._parse_llm_response(response)
+        heuristics = self.extract_heuristics_from_text(resume_text)
+        return self._merge_parsed_with_heuristics(parsed, heuristics)
+
+    def extract_heuristics_from_text(self, resume_text: str) -> dict:
+        """Extract contact info and skills from raw resume text when LLM parsing fails or is incomplete."""
+        text = resume_text or ""
+        normalized = re.sub(r"\s+", " ", text)
+        result: dict = {}
+
+        email_match = re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", text)
+        if email_match:
+            result["email"] = email_match.group(0).strip()
+
+        phone_match = re.search(
+            r"(?:\+?\d{1,3}[\s-]?)?(?:\(?\d{2,4}\)?[\s-]?)?\d{3,4}[\s-]?\d{4,6}",
+            text,
+        )
+        if phone_match:
+            phone = re.sub(r"\s+", " ", phone_match.group(0)).strip()
+            digits = re.sub(r"\D", "", phone)
+            if len(digits) >= 10:
+                result["phone"] = phone
+
+        for line in text.splitlines()[:8]:
+            candidate = re.sub(r"\s+", " ", line).strip()
+            if not candidate or len(candidate) > 80:
+                continue
+            lower = candidate.lower()
+            if any(x in lower for x in ("@", "http", "linkedin", "summary", "resume", "curriculum")):
+                continue
+            if re.search(r"\d{5,}", candidate):
+                continue
+            if re.match(r"^[A-Za-z][A-Za-z\s.'-]{2,60}$", candidate) and 2 <= len(candidate.split()) <= 5:
+                result["full_name"] = candidate.title() if candidate.isupper() else candidate
+                break
+
+        exp_match = re.search(
+            r"(?:around|over|more than|approximately|~)?\s*(\d+(?:\.\d+)?)\+?\s*(?:years?|yrs?)\s+(?:of\s+)?(?:experience|exp)",
+            normalized,
+            re.IGNORECASE,
+        )
+        if exp_match:
+            result["experience_years"] = float(exp_match.group(1))
+
+        role_match = re.search(
+            r"(Senior\s+)?(?:AEM|Adobe Experience Manager|EDS|Edge Delivery)[\w\s/\-]{0,40}(?:Developer|Engineer|Architect|Consultant|Lead)",
+            text,
+            re.IGNORECASE,
+        )
+        if role_match:
+            result["current_role"] = re.sub(r"\s+", " ", role_match.group(0)).strip()
+
+        location_match = re.search(
+            r"(?:location|based in|city)[:\s]+([A-Za-z\s,]+(?:India|IN))",
+            text,
+            re.IGNORECASE,
+        )
+        if location_match:
+            result["location"] = location_match.group(1).strip()
+        elif re.search(r"\bHyderabad\b", text, re.IGNORECASE):
+            result["location"] = "Hyderabad, India"
+
+        skills = []
+        text_lower = text.lower()
+        for skill in _SKILL_KEYWORDS:
+            if skill.lower() in text_lower and skill not in skills:
+                skills.append(skill)
+        if skills:
+            result["skills"] = skills
+
+        if "architect" in text_lower and "aem" in text_lower:
+            result["target_roles"] = ["AEM Architect", "Senior AEM Developer"]
+        elif "senior" in text_lower and "aem" in text_lower:
+            result["target_roles"] = ["Senior AEM Developer", "AEM Architect"]
+
+        return result
+
+    def _merge_parsed_with_heuristics(self, parsed: dict, heuristics: dict) -> dict:
+        """Fill missing LLM fields with heuristic extractions."""
+        merged = dict(heuristics)
+        merged.update({k: v for k, v in (parsed or {}).items() if v not in (None, "", [], {})})
+        for key in ("full_name", "email", "phone", "summary", "current_role", "current_company", "location"):
+            if not merged.get(key) and heuristics.get(key):
+                merged[key] = heuristics[key]
+        if not merged.get("skills") and heuristics.get("skills"):
+            merged["skills"] = heuristics["skills"]
+        elif merged.get("skills") and heuristics.get("skills"):
+            merged["skills"] = list(dict.fromkeys(merged["skills"] + heuristics["skills"]))
+        if merged.get("experience_years") is None and heuristics.get("experience_years") is not None:
+            merged["experience_years"] = heuristics["experience_years"]
+        if not merged.get("target_roles") and heuristics.get("target_roles"):
+            merged["target_roles"] = heuristics["target_roles"]
+        return merged
 
     def _parse_llm_response(self, response: str) -> dict:
         """Parse LLM response into structured dict."""
@@ -186,8 +293,48 @@ Output ONLY the JSON object, no markdown fences, no commentary."""
             except json.JSONDecodeError:
                 pass
 
+        # Recover individual fields from truncated JSON
+        recovered = self._recover_partial_json(response)
+        if recovered:
+            return recovered
+
         print(f"Failed to parse LLM resume response: {response[:200]}...")
         return {}
+
+    def _recover_partial_json(self, response: str) -> dict:
+        """Extract fields from truncated or malformed JSON LLM output."""
+        if not response or "{" not in response:
+            return {}
+
+        result: dict = {}
+        string_fields = (
+            "full_name", "email", "phone", "summary", "current_role",
+            "current_company", "education", "location", "preferred_work_arrangement",
+        )
+        for field in string_fields:
+            match = re.search(
+                rf'"{field}"\s*:\s*"((?:[^"\\]|\\.)*)"',
+                response,
+                re.DOTALL,
+            )
+            if match:
+                value = match.group(1).replace('\\"', '"').replace("\\n", "\n").strip()
+                if value and value.lower() != "null":
+                    result[field] = value
+
+        exp_match = re.search(r'"experience_years"\s*:\s*(\d+(?:\.\d+)?)', response)
+        if exp_match:
+            result["experience_years"] = float(exp_match.group(1))
+
+        for list_field in ("skills", "certifications", "target_roles", "notable_projects", "companies_worked"):
+            match = re.search(rf'"{list_field}"\s*:\s*\[(.*?)\]', response, re.DOTALL)
+            if not match:
+                continue
+            items = re.findall(r'"((?:[^"\\]|\\.)*)"', match.group(1))
+            if items:
+                result[list_field] = [i.replace('\\"', '"') for i in items]
+
+        return result
 
     # ══════════════════════════════════════════════════════════════════════
     #  PROFILE UPDATE FROM PARSED RESUME
@@ -350,8 +497,11 @@ Output ONLY the JSON object, no markdown fences, no commentary."""
             saved_path.unlink(missing_ok=True)
             raise ValueError(f"Resume appears empty or too short ({len(resume_text)} chars). Please upload a valid resume.")
 
-        # 3. Parse with LLM
+        # 3. Parse with LLM (+ heuristic fallbacks)
         parsed = await self.parse_resume_with_llm(resume_text)
+
+        if not parsed:
+            parsed = self.extract_heuristics_from_text(resume_text)
 
         if not parsed:
             # Still save the text even if LLM parsing failed
@@ -380,6 +530,31 @@ Output ONLY the JSON object, no markdown fences, no commentary."""
             "parsed_data": parsed,
             "resume_text_length": len(resume_text),
             "file_saved": str(saved_path),
+        }
+
+    async def reparse_stored_resume(self, profile: Profile, db: Session) -> dict:
+        """Re-parse an already-uploaded resume and refresh profile fields."""
+        if not profile.resume_text or len(profile.resume_text.strip()) < 50:
+            raise ValueError("No resume text stored — upload a resume first.")
+
+        parsed = await self.parse_resume_with_llm(profile.resume_text)
+        if not parsed:
+            parsed = self.extract_heuristics_from_text(profile.resume_text)
+
+        file_path = profile.resume_file_path or ""
+        update_result = self.update_profile_from_parsed_resume(
+            parsed=parsed,
+            resume_text=profile.resume_text,
+            file_path=file_path,
+            profile=profile,
+            db=db,
+        )
+        await self._rescore_all_jobs(profile, db)
+
+        return {
+            **update_result,
+            "parsed_data": parsed,
+            "message": "Profile updated from stored resume",
         }
 
     async def _rescore_all_jobs(self, profile: Profile, db: Session):

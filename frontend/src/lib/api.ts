@@ -104,6 +104,9 @@ export const uploadResume = (file: File) => {
   return uploadFileAPI('/api/profile/resume-upload', formData);
 };
 
+export const reparseResume = () =>
+  fetchAPI('/api/profile/resume-reparse', { method: 'POST' });
+
 export const getResumeStatus = () => fetchAPI('/api/profile/resume-status');
 
 export const getResumeSearchQueries = () => fetchAPI('/api/profile/resume-search-queries');

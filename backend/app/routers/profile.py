@@ -161,6 +161,24 @@ async def upload_resume(
     }
 
 
+@router.post("/resume-reparse")
+async def reparse_resume(db: Session = Depends(get_db)):
+    """Re-parse the stored resume and refresh profile fields (name, email, skills, etc.)."""
+    profile = _ensure_profile(db)
+    try:
+        result = await resume_parser.reparse_stored_resume(profile, db)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Resume re-parse failed: {e}")
+
+    return {
+        "message": result.get("message", "Profile updated from stored resume"),
+        "details": result,
+        "profile": _profile_to_response(profile),
+    }
+
+
 @router.get("/resume-status")
 def get_resume_status(db: Session = Depends(get_db)):
     """Get resume upload status."""

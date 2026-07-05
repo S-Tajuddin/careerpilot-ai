@@ -109,6 +109,16 @@ class JobService:
                 # Update existing job if needed
                 existing.is_active = True
                 existing.updated_at = datetime.now(timezone.utc)
+                # Fix company name if previously stored as Unknown Company
+                if (
+                    norm_job.company_name
+                    and norm_job.company_name != "Unknown Company"
+                    and (not existing.company_name or existing.company_name == "Unknown Company")
+                ):
+                    existing.company_name = norm_job.company_name
+                    company_id = self._find_or_create_company(norm_job.company_name, db)
+                    if company_id:
+                        existing.company_id = company_id
                 # Update salary if not previously set
                 if not existing.salary_min and norm_job.salary_min:
                     existing.salary_min = norm_job.salary_min

@@ -440,8 +440,8 @@ class TestAdzunaConnector:
         raw = {
             "id": 12345,
             "title": "AEM Developer",
-            "company": {"displayname": "Capgemini"},
-            "location": {"displayname": "Hyderabad, Telangana"},
+            "company": {"display_name": "Capgemini"},
+            "location": {"display_name": "Hyderabad, Telangana"},
             "description": "AEM development role...",
             "redirect_url": "https://adzuna.com/job/12345",
             "salary_min": 1500000,
@@ -466,8 +466,8 @@ class TestAdzunaConnector:
         raw = {
             "id": 99,
             "title": "Remote AEM Developer",
-            "company": {"displayname": "Adobe"},
-            "location": {"displayname": "Remote"},
+            "company": {"display_name": "Adobe"},
+            "location": {"display_name": "Remote"},
             "description": "Work from home AEM role",
             "redirect_url": "https://example.com",
         }

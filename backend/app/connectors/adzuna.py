@@ -128,7 +128,7 @@ class AdzunaConnector(BaseConnector):
         Convert Adzuna API response to NormalizedJob.
         
         Key fields:
-        - id, title, company.displayname, location.displayname
+        - id, title, company.display_name, location.display_name
         - description, redirect_url, created, salary_min, salary_max
         - contract_time, contract_type
         """
@@ -137,21 +137,29 @@ class AdzunaConnector(BaseConnector):
         salary_max = raw_job.get("salary_max")
         # Adzuna returns yearly salary for India in INR
 
-        # Location
+        # Location — API uses display_name (snake_case), not displayname
         location_obj = raw_job.get("location", {})
-        location_parts = []
-        for key in ["area", "region", "displayname"]:
-            val = location_obj.get(key)
-            if val:
-                if isinstance(val, list):
-                    location_parts.extend(val)
-                else:
-                    location_parts.append(str(val))
-        location = ", ".join(location_parts) if location_parts else None
+        display_location = location_obj.get("display_name") or location_obj.get("displayname")
+        if display_location:
+            location = str(display_location)
+        else:
+            location_parts = []
+            for key in ["area", "region"]:
+                val = location_obj.get(key)
+                if val:
+                    if isinstance(val, list):
+                        location_parts.extend(val)
+                    else:
+                        location_parts.append(str(val))
+            location = ", ".join(location_parts) if location_parts else None
 
-        # Company
+        # Company — API uses display_name (snake_case), not displayname
         company = raw_job.get("company", {})
-        company_name = company.get("displayname", "Unknown Company")
+        company_name = (
+            company.get("display_name")
+            or company.get("displayname")
+            or "Unknown Company"
+        )
 
         # Job type
         contract_time = raw_job.get("contract_time", "")

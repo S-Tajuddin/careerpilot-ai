@@ -22,7 +22,7 @@ import {
   HiOutlineFunnel,
 } from 'react-icons/hi2';
 import {
-  getProfile, updateProfile, uploadResume, getResumeStatus, deleteResume,
+  getProfile, updateProfile, uploadResume, reparseResume, getResumeStatus, deleteResume,
   getResumeSearchQueries, searchJobsByResume,
 } from '@/lib/api';
 import toast from 'react-hot-toast';
@@ -71,8 +71,30 @@ export default function ProfilePage() {
         getResumeStatus(),
         getResumeSearchQueries(),
       ]);
-      if (data.status === 'fulfilled') {
-        const p = data.value;
+
+      let profileData = data.status === 'fulfilled' ? data.value : null;
+      const hasStoredResume = status.status === 'fulfilled' && status.value.has_resume;
+
+      // Re-sync profile from stored resume when key fields are missing
+      if (
+        profileData &&
+        hasStoredResume &&
+        (!profileData.full_name || !profileData.email || !profileData.skills?.length)
+      ) {
+        try {
+          const reparsed = await reparseResume();
+          profileData = reparsed.profile || profileData;
+          if (reparsed.details?.parsed_data) {
+            setParsedPreview(reparsed.details.parsed_data);
+          }
+          toast.success('Profile updated from your resume', { duration: 4000 });
+        } catch {
+          // Non-fatal — show whatever profile data we have
+        }
+      }
+
+      if (profileData) {
+        const p = profileData;
         setProfile(p);
         setForm({
           full_name: p.full_name || '',
@@ -96,7 +118,7 @@ export default function ProfilePage() {
             const start = p.summary.indexOf('[PARSED_DATA]') + '[PARSED_DATA]'.length;
             const end = p.summary.indexOf('[/PARSED_DATA]');
             const jsonStr = p.summary.substring(start, end);
-            setParsedPreview(JSON.parse(jsonStr));
+            setParsedPreview((prev) => prev || JSON.parse(jsonStr));
           } catch { /* ignore */ }
         }
       }
@@ -174,7 +196,29 @@ export default function ProfilePage() {
       }
 
       // Re-load profile to refresh all form fields with updated data
-      await loadProfile();
+      if (result.profile) {
+        const p = result.profile;
+        setProfile(p);
+        setForm({
+          full_name: p.full_name || '',
+          email: p.email || '',
+          phone: p.phone || '',
+          current_role: p.current_role || '',
+          location: p.location || 'Hyderabad, India',
+          skills: p.skills || [],
+          experience_years: p.experience_years || 8,
+          target_role: p.target_role || 'Senior AEM Developer / AEM Architect',
+          expected_salary_min: (p.expected_salary_min || 2000000) / 100000,
+          expected_salary_max: (p.expected_salary_max || 3500000) / 100000,
+          remote_preference: p.remote_preference || 'any',
+          notice_period: p.notice_period || '60_days',
+          summary: p.summary || '',
+        });
+        setSkillsText((p.skills || []).join(', '));
+        setResumeStatus({ has_resume: true, has_file: true });
+      } else {
+        await loadProfile();
+      }
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Resume upload failed');
     } finally {

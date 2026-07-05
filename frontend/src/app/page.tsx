@@ -212,7 +212,7 @@ export default function Dashboard() {
             subtitle={`${jobStats?.onsite_jobs ?? 0} onsite`}
           />
         </div>
-        <div onClick={() => router.push('/jobs?sort=match_score')} className="cursor-pointer">
+        <div onClick={() => router.push('/jobs?sort_by=match_score')} className="cursor-pointer">
           <StatsCard
             icon={<HiOutlineArrowTrendingUp className="w-6 h-6" />}
             label="Avg Match"

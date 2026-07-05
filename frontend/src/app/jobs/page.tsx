@@ -20,7 +20,7 @@ import {
   HiOutlinePencilSquare,
   HiOutlineArrowDownTray,
 } from 'react-icons/hi2';
-import { searchJobs, searchJobsByResume, getResumeStatus, getResumeSearchQueries, generateCoverLetter, tailorResume, downloadCoverLetterUrl, downloadTailoredResumeUrl } from '@/lib/api';
+import { getJobs, searchJobs, searchJobsByResume, getResumeStatus, getResumeSearchQueries, generateCoverLetter, tailorResume, downloadCoverLetterUrl, downloadTailoredResumeUrl } from '@/lib/api';
 import toast from 'react-hot-toast';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
@@ -30,8 +30,8 @@ function JobsPage() {
   const searchParams = useSearchParams();
   const [jobs, setJobs] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false); // Don't show results until user searches
+  const [loading, setLoading] = useState(true);
+  const [hasSearched, setHasSearched] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [location, setLocation] = useState('India');
   const [remoteOnly, setRemoteOnly] = useState(false);
@@ -41,23 +41,26 @@ function JobsPage() {
   const [hasResume, setHasResume] = useState(false);
   const [resumeSearching, setResumeSearching] = useState(false);
   const [resumeQueries, setResumeQueries] = useState<any[]>([]);
-  const [searchMode, setSearchMode] = useState<'manual' | 'resume'>('manual');
+  const [searchMode, setSearchMode] = useState<'manual' | 'resume' | 'saved'>('saved');
   const [searchChips, setSearchChips] = useState<Array<{label: string; query: string; location: string; source: 'resume'}>>([]);
   const [generatingDoc, setGeneratingDoc] = useState<{type: 'cover_letter' | 'tailored_resume' | null; jobId: number | null}>({type: null, jobId: null});
   const [coverLetterModal, setCoverLetterModal] = useState<{content: string; id: number; jobId: number} | null>(null);
 
   useEffect(() => {
-    // Only auto-search if user came from Profile/Dashboard with a query param
     const q = searchParams.get('q');
     const loc = searchParams.get('loc');
-    const remote = searchParams.get('remote');
+    const remote = searchParams.get('remote') === 'true';
+    const sortBy = searchParams.get('sort_by') || searchParams.get('sort') || 'match_score';
+
     if (q) {
       setSearchQuery(q);
       setLocation(loc || 'India');
-      if (remote === 'true') setRemoteOnly(true);
-      handleSearchWithQuery(q, loc || 'India', remote === 'true');
+      if (remote) setRemoteOnly(true);
+      handleSearchWithQuery(q, loc || 'India', remote);
+    } else {
+      if (remote) setRemoteOnly(true);
+      loadSavedJobs({ remoteOnly: remote, sortBy });
     }
-    // Otherwise: NO auto-load. User must click a search button.
     loadSearchConfig();
   }, []);
 
@@ -85,6 +88,28 @@ function JobsPage() {
       if (!seen.has(key)) { seen.add(key); merged.push(c); }
     }
     setSearchChips(merged);
+  }
+
+  async function loadSavedJobs(options?: { remoteOnly?: boolean; sortBy?: string }) {
+    setLoading(true);
+    setHasSearched(true);
+    setSearchMode('saved');
+    try {
+      const params: Record<string, string | number | boolean> = {
+        per_page: 50,
+        sort_by: options?.sortBy || 'match_score',
+        sort_order: 'desc',
+      };
+      if (options?.remoteOnly) params.is_remote = true;
+
+      const results = await getJobs(params);
+      setJobs(results.jobs || []);
+      setTotal(results.total || 0);
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to load saved jobs');
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleSearchWithQuery(q: string, loc: string, remote: boolean) {
@@ -350,7 +375,18 @@ function JobsPage() {
       {/* RESULTS — only shown AFTER user clicks a search button            */}
       {/* ═══════════════════════════════════════════════════════════════════ */}
 
-      {!hasSearched ? (
+      {loading ? (
+        /* ── Loading state ── */
+        <div className="glass-card p-12 text-center">
+          <HiOutlineArrowPath className="w-12 h-12 mx-auto mb-4 text-brand-400 animate-spin" />
+          <p className="text-sm text-brand-300 font-medium">
+            {searchMode === 'saved' ? 'Loading saved jobs...' : 'Searching across JSearch + Adzuna...'}
+          </p>
+          {searchMode !== 'saved' && (
+            <p className="text-xs text-slate-500 mt-1">This may take a few seconds</p>
+          )}
+        </div>
+      ) : !hasSearched ? (
         /* ── Empty state: user hasn't searched yet ── */
         <div className="glass-card p-16 text-center">
           <HiOutlineMagnifyingGlass className="w-20 h-20 mx-auto mb-5 text-slate-700" />
@@ -373,13 +409,6 @@ function JobsPage() {
             )}
           </div>
         </div>
-      ) : loading ? (
-        /* ── Loading state ── */
-        <div className="glass-card p-12 text-center">
-          <HiOutlineArrowPath className="w-12 h-12 mx-auto mb-4 text-brand-400 animate-spin" />
-          <p className="text-sm text-brand-300 font-medium">Searching across JSearch + Adzuna...</p>
-          <p className="text-xs text-slate-500 mt-1">This may take a few seconds</p>
-        </div>
       ) : jobs.length === 0 ? (
         /* ── No results state ── */
         <div className="glass-card p-12 text-center">
@@ -394,8 +423,9 @@ function JobsPage() {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-sm text-slate-400">
-              {total} job{total !== 1 ? 's' : ''} found
+              {total} {searchMode === 'saved' ? 'saved job' : 'job'}{total !== 1 ? 's' : ''}{searchMode === 'saved' ? '' : ' found'}
               {searchMode === 'resume' && <span className="text-brand-400 ml-1">· Resume-prioritized</span>}
+              {searchMode === 'saved' && remoteOnly && <span className="text-purple-400 ml-1">· Remote only</span>}
             </p>
           </div>
 
@@ -413,7 +443,7 @@ function JobsPage() {
                         <span className="text-xs text-slate-300">{job.company_name}</span>
                         {job.location && <span className="text-xs text-slate-500 flex items-center gap-1"><HiOutlineMapPin className="w-3 h-3" /> {job.location}</span>}
                         {job.is_remote && <span className="text-[10px] font-medium text-purple-400 bg-purple-400/10 px-1.5 py-0.5 rounded">Remote</span>}
-                        {job.job_type && <span className="text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded capitalize">{job.job_type}</span>}
+                        {job.job_type && <span className="text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded capitalize">{job.job_type.replace(/_/g, ' ')}</span>}
                         {job.posted_date && <span className="text-xs text-slate-600 flex items-center gap-1"><HiOutlineClock className="w-3 h-3" /> {new Date(job.posted_date).toLocaleDateString('en-IN')}</span>}
                       </div>
                     </div>
