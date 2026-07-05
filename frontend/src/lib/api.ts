@@ -65,10 +65,21 @@ export const getJob = (id: number) => fetchAPI(`/api/jobs/${id}`);
 
 export const getJobStats = () => fetchAPI('/api/jobs/stats/summary');
 
+export const scoreJob = (jobId: number) =>
+  fetchAPI('/api/jobs/score', {
+    method: 'POST',
+    body: JSON.stringify({ job_id: jobId }),
+  });
+
+export const getJobScoreDetail = (jobId: number) =>
+  fetchAPI(`/api/jobs/${jobId}/score-detail`);
+
 // ── Applications ────────────────────────────────────────────────────────────
-export const getApplications = (params?: Record<string, string | number>) => {
+export const getApplications = (params?: { status?: string; limit?: number; offset?: number }) => {
   const sp = new URLSearchParams();
-  if (params) Object.entries(params).forEach(([k, v]) => sp.append(k, String(v)));
+  if (params?.status) sp.append('status', params.status);
+  if (params?.limit) sp.append('limit', String(params.limit));
+  if (params?.offset) sp.append('offset', String(params.offset));
   return fetchAPI(`/api/applications/?${sp.toString()}`);
 };
 
@@ -147,3 +158,25 @@ export const downloadCoverLetterUrl = (id: number) =>
 
 export const downloadTailoredResumeUrl = (jobId: number) =>
   `${API_URL}/api/documents/download/tailored-resume/${jobId}`;
+
+// ── Scheduler & Settings ────────────────────────────────────────────────────
+export const getSchedulerStatus = () => fetchAPI('/scheduler/status');
+
+export const getSchedulerSettings = () => fetchAPI('/scheduler/settings');
+
+export const updateSchedulerSettings = (data: Record<string, unknown>) =>
+  fetchAPI('/scheduler/settings', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+
+export const startScheduler = () => fetchAPI('/scheduler/start', { method: 'POST' });
+
+export const stopScheduler = () => fetchAPI('/scheduler/stop', { method: 'POST' });
+
+export const triggerSchedulerJob = (job: 'search' | 'digest' | 'sheets-sync') =>
+  fetchAPI(`/scheduler/trigger/${job}`, { method: 'POST' });
+
+export const testTelegram = () => fetchAPI('/telegram/test');
+
+export const sendTelegramTest = () => fetchAPI('/telegram/send-test', { method: 'POST' });

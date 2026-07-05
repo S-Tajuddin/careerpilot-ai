@@ -97,17 +97,15 @@ function CompanyPageInner() {
   const hasResults = research || interviewTips || salaryIntel;
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px]">
-      {/* Header */}
+    <div className="page-shell">
       <div>
-        <h1 className="text-2xl font-bold text-white">Company Intel</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-white">Company Intel</h1>
         <p className="text-sm text-slate-400 mt-0.5">AI-powered company research, interview tips & salary insights via Gemini Flash</p>
       </div>
 
-      {/* Search */}
       <div className="glass-card p-5 space-y-4">
-        <div className="flex gap-3">
-          <div className="flex-1 relative">
+        <div className="search-row">
+          <div className="flex-1 relative min-w-0">
             <HiOutlineBuildingOffice2 className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
             <input
               type="text"
@@ -118,7 +116,7 @@ function CompanyPageInner() {
               className="input-dark w-full pl-10"
             />
           </div>
-          <button onClick={handleResearch} disabled={loading} className="btn-primary flex items-center gap-2">
+          <button onClick={handleResearch} disabled={loading} className="btn-primary flex items-center justify-center gap-2 w-full sm:w-auto">
             {loading ? <HiOutlineArrowPath className="w-4 h-4 animate-spin" /> : <HiOutlineMagnifyingGlass className="w-4 h-4" />}
             Research
           </button>
@@ -141,7 +139,7 @@ function CompanyPageInner() {
 
         {/* Action buttons */}
         {companyName && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button onClick={handleInterviewTips} disabled={loading} className="btn-secondary text-xs flex items-center gap-1.5">
               <HiOutlineChatBubbleLeftRight className="w-4 h-4" /> Interview Tips
             </button>

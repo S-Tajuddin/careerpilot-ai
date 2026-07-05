@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import './globals.css';
-import Sidebar from '@/components/Sidebar';
+import AppShell from '@/components/AppShell';
 import { Toaster } from 'react-hot-toast';
 
 const inter = Inter({ subsets: ['latin'] });
@@ -15,10 +15,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="dark">
       <body className={`${inter.className} bg-slate-950 text-slate-200`}>
-        <Sidebar />
-        <main className="ml-64 min-h-screen transition-all duration-300">
+        <AppShell>
           {children}
-        </main>
+        </AppShell>
         <Toaster
           position="top-right"
           toastOptions={{

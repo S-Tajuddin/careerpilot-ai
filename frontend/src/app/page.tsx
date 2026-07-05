@@ -5,8 +5,6 @@ import { useRouter } from 'next/navigation';
 import {
   HiOutlineBriefcase,
   HiOutlineClipboardDocumentList,
-  HiOutlineMapPin,
-  HiOutlineCurrencyDollar,
   HiOutlineArrowTrendingUp,
   HiOutlineGlobeAlt,
   HiOutlineBolt,
@@ -45,8 +43,6 @@ export default function Dashboard() {
   const [health, setHealth] = useState<HealthData | null>(null);
   const [jobStats, setJobStats] = useState<JobStatsData | null>(null);
   const [appStats, setAppStats] = useState<AppStatsData | null>(null);
-  const [recentJobs, setRecentJobs] = useState<any[]>([]);
-  const [searching, setSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [hasResume, setHasResume] = useState(false);
   const [resumeSearching, setResumeSearching] = useState(false);
@@ -111,9 +107,9 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-[1400px]">
+    <div className="page-shell">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="page-header">
         <div>
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
           <p className="text-sm text-slate-400 mt-0.5">Your AEM/EDS career command center</p>
@@ -126,7 +122,7 @@ export default function Dashboard() {
 
       {/* System Health Strip */}
       {health && (
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           {(['database', 'ollama', 'gemini'] as const).map((service) => (
             <div key={service} className="glass-card px-3 py-2 flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${statusDot(health[service as keyof HealthData] as string)} pulse-dot`} />
@@ -141,7 +137,7 @@ export default function Dashboard() {
 
       {/* Quick Search */}
       <div className="glass-card p-4">
-        <div className="flex gap-3">
+        <div className="search-row">
           <div className="flex-1 relative">
             <HiOutlineBriefcase className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
             <input
@@ -153,7 +149,7 @@ export default function Dashboard() {
               className="input-dark w-full pl-10"
             />
           </div>
-          <button onClick={handleQuickSearch} className="btn-primary flex items-center gap-2">
+          <button onClick={handleQuickSearch} className="btn-primary flex items-center justify-center gap-2 w-full sm:w-auto">
             <HiOutlineBolt className="w-4 h-4" />
             Search
           </button>
@@ -162,8 +158,8 @@ export default function Dashboard() {
               onClick={handleResumeSearch}
               disabled={resumeSearching}
               className="bg-gradient-to-r from-brand-500 to-purple-500 hover:from-brand-400 hover:to-purple-400 
-                         text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 
-                         transition-all disabled:opacity-50 whitespace-nowrap"
+                         text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 
+                         transition-all disabled:opacity-50 whitespace-nowrap w-full sm:w-auto"
             >
               {resumeSearching ? (
                 <><HiOutlineArrowPath className="w-4 h-4 animate-spin" /> Searching...</>
@@ -175,7 +171,7 @@ export default function Dashboard() {
           {!hasResume && (
             <button
               onClick={() => router.push('/profile')}
-              className="btn-secondary flex items-center gap-2 whitespace-nowrap"
+              className="btn-secondary flex items-center justify-center gap-2 whitespace-nowrap w-full sm:w-auto"
             >
               <HiOutlineDocumentText className="w-4 h-4" /> Upload Resume
             </button>

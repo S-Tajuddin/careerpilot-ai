@@ -12,6 +12,7 @@
 - [Project Structure](#-project-structure)
 - [Implementation Status](#-implementation-status)
 - [Setup & Run](#-setup--run)
+- [Responsive UI](#-responsive-ui)
 - [API Reference](#-api-reference)
 - [Configuration](#-configuration)
 - [Tech Stack](#-tech-stack)
@@ -294,20 +295,23 @@ careerpilot-ai/
 ├── frontend/
 │   ├── src/
 │   │   ├── app/
-│   │   │   ├── layout.tsx           # Root layout (Sidebar + Toaster)
+│   │   │   ├── layout.tsx           # Root layout (AppShell + Toaster)
 │   │   │   ├── page.tsx             # Dashboard (stats, quick search, resume match)
-│   │   │   ├── globals.css          # Dark theme, glass-morphism
-│   │   │   ├── jobs/page.tsx        # Job search + results + scoring
-│   │   │   ├── applications/page.tsx # Application tracking
+│   │   │   ├── globals.css          # Dark theme, glass-morphism, responsive utilities
+│   │   │   ├── jobs/page.tsx        # Job search + saved jobs + scoring modals
+│   │   │   ├── applications/page.tsx # Application tracking (kanban + list)
 │   │   │   ├── company/page.tsx     # Company intel
 │   │   │   ├── profile/page.tsx     # Profile + Resume + Search Config
-│   │   │   └── settings/page.tsx    # Scheduler + Telegram + search defaults
+│   │   │   └── settings/page.tsx    # Scheduler + Telegram + automation
 │   │   │
 │   │   ├── components/
-│   │   │   └── Sidebar.tsx          # Navigation (6 items)
+│   │   │   ├── AppShell.tsx         # Mobile header + sidebar state + main margin
+│   │   │   └── Sidebar.tsx          # Collapsible nav (drawer on mobile)
 │   │   │
 │   │   └── lib/
-│   │       └── api.ts               # API client (all backend endpoints)
+│   │       ├── api.ts               # Centralized API client (all endpoints)
+│   │       ├── utils.ts             # Shared helpers (isAEMSkill, URL validation)
+│   │       └── profileForm.ts       # Profile ↔ form state mapping
 │   │
 │   ├── package.json                 # next@14.2.35 pinned
 │   ├── next.config.js               # API proxy rewrite
@@ -347,6 +351,8 @@ careerpilot-ai/
 | **APScheduler** | `services/scheduler.py` (4 cron jobs: daily search, digest, followup, sheets sync) | ✅ Done |
 | **Settings Router** | `routers/scheduler.py` (11 endpoints: scheduler, Telegram test, search defaults) | ✅ Done |
 | **Frontend: 6 Pages** | Dashboard, Jobs, Applications, Company Intel, Profile, Settings | ✅ Done |
+| **Responsive UI** | Mobile drawer nav, stacked search bars, adaptive grids (sm/md/lg) | ✅ Done |
+| **Jobs Page** | Loads saved jobs from DB on visit; external search via query param | ✅ Done |
 | **Dashboard** | Stats cards (clickable), quick search → /jobs, Resume Match button | ✅ Done |
 | **Profile Page** | Resume upload + search config + personal info + career + skills + targets | ✅ Done |
 | **Jobs Page** | Resume search banner, search bar + filters, chips from profile/resume, scoring modals | ✅ Done |
@@ -445,6 +451,36 @@ cd backend && start.bat
 
 ---
 
+## 📱 Responsive UI
+
+CareerPilot is optimized for **mobile phones, tablets, and laptops**:
+
+| Feature | Mobile (< md) | Laptop (≥ md) |
+|---------|---------------|---------------|
+| **Navigation** | Hamburger menu → slide-out drawer | Fixed sidebar (collapsible to icons) |
+| **Search bars** | Stack vertically (query → location → button) | Horizontal row |
+| **Profile forms** | Single-column fields | Two-column grid |
+| **Dashboard stats** | 1–2 columns | 4-column grid |
+| **Applications kanban** | Stacked columns | 5-column board |
+| **Job cards** | Stacked title/meta/actions | Side-by-side layout |
+
+### Shared CSS utilities (`globals.css`)
+
+- `.page-shell` — standard page padding + max-width (1400px)
+- `.page-shell-narrow` — profile/settings width (960px)
+- `.page-header` — responsive title + actions row
+- `.search-row` — stacks on mobile, row on `sm+`
+- `.form-grid` — 1 column mobile, 2 columns on `md+`
+
+### Frontend architecture notes
+
+- **`AppShell`** coordinates sidebar width and main content margin (`ml-0` mobile, `ml-64` desktop)
+- **`lib/api.ts`** is the single source for all HTTP calls (jobs, profile, scheduler, scoring)
+- **`lib/utils.ts`** holds shared helpers (`isAEMSkill`, `isGenuineUrl`, chip deduplication)
+- Dead code removed: unused imports, duplicate fetch calls, non-functional Save button (now saves to Applications)
+
+---
+
 ## 📡 API Reference
 
 ### Health
@@ -458,6 +494,7 @@ cd backend && start.bat
 | GET | `/api/profile/` | Get your profile |
 | PUT | `/api/profile/` | Update profile (partial) |
 | POST | `/api/profile/resume-upload` | Upload PDF/DOCX/TXT → AI parses → profile updates |
+| POST | `/api/profile/resume-reparse` | Re-parse stored resume and refresh profile fields |
 | GET | `/api/profile/resume-status` | Check if resume is uploaded |
 | GET | `/api/profile/resume-search-queries` | Get AI-generated search queries from resume |
 | DELETE | `/api/profile/resume` | Remove resume |
@@ -467,8 +504,8 @@ cd backend && start.bat
 ### Jobs
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/jobs/` | List jobs (paginated, filterable, sortable) |
-| GET | `/api/jobs/search?query=...` | Search JSearch + Adzuna |
+| GET | `/api/jobs/` | List saved jobs (paginated, filterable, sortable) |
+| GET | `/api/jobs/search?query=...` | Search JSearch + Adzuna (saves to DB) |
 | GET | `/api/jobs/search-by-resume` | Resume-based multi-query search |
 | POST | `/api/jobs/search` | Search (POST with body) |
 | POST | `/api/jobs/score` | Deep score one job (LLM + embeddings) |
@@ -604,5 +641,9 @@ pytest tests/test_backend.py -v          # 35 backend tests
 | JSearch "Endpoint /search does not exist" | Use `/search-v2` (new endpoint) |
 | TypeScript `catch (e: any)` error | Use `catch (err: unknown)` with instanceof check |
 | FastAPI `/{job_id}` catches `/search` | Place ALL specific routes BEFORE parameterized routes |
-| Resume parsing empty | Ensure PDF is text-based (not scanned image) |
+| Resume parsing empty | Ensure PDF is text-based (not scanned image). Try **Re-upload** or `POST /api/profile/resume-reparse` |
+| Profile fields show "Not set" after upload | LLM JSON may truncate — reparse endpoint + heuristic extraction auto-fills name/email/skills |
+| Jobs page empty after clicking Dashboard stats | Fixed: `/jobs` now auto-loads saved jobs from DB via `GET /api/jobs/` |
+| Company names show "Unknown Company" | Adzuna uses `display_name` field — ensure latest backend connector is running |
+| Sidebar overlaps content on mobile | Use hamburger menu (top-left); drawer closes on navigation |
 | Telegram chat_id missing | Send any message to your bot, then hit getUpdates URL |

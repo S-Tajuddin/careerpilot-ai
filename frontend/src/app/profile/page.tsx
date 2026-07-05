@@ -16,15 +16,14 @@ import {
   HiOutlineTrash,
   HiOutlineSparkles,
   HiOutlineMagnifyingGlass,
-  HiOutlinePlusCircle,
-  HiOutlineXMark,
   HiOutlineRocketLaunch,
-  HiOutlineFunnel,
 } from 'react-icons/hi2';
 import {
   getProfile, updateProfile, uploadResume, reparseResume, getResumeStatus, deleteResume,
   getResumeSearchQueries, searchJobsByResume,
 } from '@/lib/api';
+import { profileToForm } from '@/lib/profileForm';
+import { isAEMSkill, dedupeSearchChips } from '@/lib/utils';
 import toast from 'react-hot-toast';
 
 export default function ProfilePage() {
@@ -96,21 +95,7 @@ export default function ProfilePage() {
       if (profileData) {
         const p = profileData;
         setProfile(p);
-        setForm({
-          full_name: p.full_name || '',
-          email: p.email || '',
-          phone: p.phone || '',
-          current_role: p.current_role || '',
-          location: p.location || 'Hyderabad, India',
-          skills: p.skills || [],
-          experience_years: p.experience_years || 8,
-          target_role: p.target_role || 'Senior AEM Developer / AEM Architect',
-          expected_salary_min: (p.expected_salary_min || 2000000) / 100000,
-          expected_salary_max: (p.expected_salary_max || 3500000) / 100000,
-          remote_preference: p.remote_preference || 'any',
-          notice_period: p.notice_period || '60_days',
-          summary: p.summary || '',
-        });
+        setForm(profileToForm(p));
         setSkillsText((p.skills || []).join(', '));
 
         if (p.summary && p.summary.includes('[PARSED_DATA]')) {
@@ -118,7 +103,7 @@ export default function ProfilePage() {
             const start = p.summary.indexOf('[PARSED_DATA]') + '[PARSED_DATA]'.length;
             const end = p.summary.indexOf('[/PARSED_DATA]');
             const jsonStr = p.summary.substring(start, end);
-            setParsedPreview((prev) => prev || JSON.parse(jsonStr));
+            setParsedPreview((prev: Record<string, unknown> | null) => prev || JSON.parse(jsonStr));
           } catch { /* ignore */ }
         }
       }
@@ -199,21 +184,7 @@ export default function ProfilePage() {
       if (result.profile) {
         const p = result.profile;
         setProfile(p);
-        setForm({
-          full_name: p.full_name || '',
-          email: p.email || '',
-          phone: p.phone || '',
-          current_role: p.current_role || '',
-          location: p.location || 'Hyderabad, India',
-          skills: p.skills || [],
-          experience_years: p.experience_years || 8,
-          target_role: p.target_role || 'Senior AEM Developer / AEM Architect',
-          expected_salary_min: (p.expected_salary_min || 2000000) / 100000,
-          expected_salary_max: (p.expected_salary_max || 3500000) / 100000,
-          remote_preference: p.remote_preference || 'any',
-          notice_period: p.notice_period || '60_days',
-          summary: p.summary || '',
-        });
+        setForm(profileToForm(p));
         setSkillsText((p.skills || []).join(', '));
         setResumeStatus({ has_resume: true, has_file: true });
       } else {
@@ -291,28 +262,24 @@ export default function ProfilePage() {
   const hasResume = resumeStatus?.has_resume || profile?.resume_text;
 
   // Resume-generated search queries only (no hardcoded defaults)
-  const allSearchChips = (() => {
-    const seen = new Set<string>();
-    const chips: { label: string; query: string; location: string; source: 'resume' }[] = [];
-    for (const q of resumeSearchQueries) {
-      const key = q.query?.toLowerCase();
-      if (key && !seen.has(key)) {
-        seen.add(key);
-        chips.push({ label: q.label || q.query, query: q.query, location: q.location || 'India', source: 'resume' });
-      }
-    }
-    return chips;
-  })();
+  const allSearchChips = dedupeSearchChips(
+    resumeSearchQueries.map((q) => ({
+      label: q.label || q.query,
+      query: q.query,
+      location: q.location || 'India',
+      source: 'resume' as const,
+    }))
+  );
 
   return (
-    <div className="p-6 space-y-6 max-w-[960px]">
+    <div className="page-shell-narrow">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="page-header">
         <div>
           <h1 className="text-2xl font-bold text-white">Profile & Search Setup</h1>
           <p className="text-sm text-slate-400 mt-0.5">Your resume drives AI scoring. Search defaults are auto-generated from it.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {hasResume && (
             <button
               onClick={handleResumeSearch}
@@ -436,7 +403,7 @@ export default function ProfilePage() {
               <p className="text-xs font-medium text-brand-400 flex items-center gap-1.5">
                 <HiOutlineSparkles className="w-3.5 h-3.5" /> AI Extracted From Resume
               </p>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs">
                 {parsedPreview.education && (
                   <div className="text-slate-400"><span className="text-slate-500">Education:</span> {parsedPreview.education}</div>
                 )}
@@ -509,7 +476,7 @@ export default function ProfilePage() {
           <HiOutlineUser className="w-4 h-4 text-brand-400" /> Personal Information
           {hasResume && <span className="text-[10px] text-emerald-400 font-normal flex items-center gap-0.5"><HiOutlineSparkles className="w-3 h-3" /> from resume</span>}
         </h2>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="form-grid">
           <Field label="Full Name" value={form.full_name} editMode={editMode} onChange={(v) => setForm({ ...form, full_name: v })} />
           <Field label="Email" value={form.email} editMode={editMode} onChange={(v) => setForm({ ...form, email: v })} type="email" />
           <Field label="Phone" value={form.phone} editMode={editMode} onChange={(v) => setForm({ ...form, phone: v })} />
@@ -525,7 +492,7 @@ export default function ProfilePage() {
           <HiOutlineBriefcase className="w-4 h-4 text-emerald-400" /> Career Details
           {hasResume && <span className="text-[10px] text-emerald-400 font-normal flex items-center gap-0.5"><HiOutlineSparkles className="w-3 h-3" /> from resume</span>}
         </h2>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="form-grid">
           <Field label="Current Role" value={form.current_role} editMode={editMode} onChange={(v) => setForm({ ...form, current_role: v })} />
           <Field label="Target Role" value={form.target_role} editMode={editMode} onChange={(v) => setForm({ ...form, target_role: v })} />
           <Field label="Experience (years)" value={String(form.experience_years)} editMode={editMode} onChange={(v) => setForm({ ...form, experience_years: parseFloat(v) || 0 })} type="number" />
@@ -587,7 +554,7 @@ export default function ProfilePage() {
         <h2 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
           <HiOutlineCurrencyDollar className="w-4 h-4 text-amber-400" /> Job Targets
         </h2>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="form-grid">
           <Field label="Min Salary (LPA)" value={String(form.expected_salary_min)} editMode={editMode} onChange={(v) => setForm({ ...form, expected_salary_min: parseInt(v) || 0 })} type="number" />
           <Field label="Max Salary (LPA)" value={String(form.expected_salary_max)} editMode={editMode} onChange={(v) => setForm({ ...form, expected_salary_max: parseInt(v) || 0 })} type="number" />
         </div>
@@ -612,11 +579,6 @@ export default function ProfilePage() {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function isAEMSkill(skill: string): boolean {
-  const aemKeywords = ['aem', 'eds', 'adobe experience', 'sling', 'osgi', 'htl', 'sightly', 'cq5', 'dispatcher', 'edge delivery', 'franklin'];
-  return aemKeywords.some(kw => skill.toLowerCase().includes(kw));
-}
 
 function Field({ label, value, editMode, onChange, type = 'text', multiline = false, placeholder, icon }: {
   label: string; value: string; editMode: boolean; onChange: (v: string) => void;
