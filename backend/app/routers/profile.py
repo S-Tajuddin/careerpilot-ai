@@ -1,18 +1,20 @@
 """
 CareerPilot AI — Profile Router
 CRUD for the single-user profile (id=1).
+Resume upload, parsing, and resume-based job search.
 """
 
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Profile
+from app.models import Profile, Job
 from app.schemas import ProfileResponse, ProfileUpdate, MessageResponse
+from app.services.resume_parser import resume_parser
 
 router = APIRouter()
 
@@ -102,6 +104,96 @@ def update_profile(updates: ProfileUpdate, db: Session = Depends(get_db)):
     return _profile_to_response(profile)
 
 
+@router.post("/resume-upload")
+async def upload_resume(
+    file: UploadFile = File(..., description="Resume file (PDF, DOCX, or TXT)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Upload and parse a resume file.
+    Supports PDF, DOCX, and TXT formats.
+    The resume is parsed with Gemini Flash to extract skills, experience, etc.
+    Profile is auto-updated and all existing jobs are re-scored.
+    """
+    profile = _ensure_profile(db)
+
+    # Validate file type
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No filename provided")
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if ext not in ("pdf", "docx", "doc", "txt"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file format: .{ext}. Please upload PDF, DOCX, or TXT.",
+        )
+
+    # Read file content
+    try:
+        file_content = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {e}")
+
+    # Validate file size (max 10MB)
+    if len(file_content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large. Maximum size is 10MB.")
+
+    if len(file_content) < 100:
+        raise HTTPException(status_code=400, detail="File appears empty or too small.")
+
+    # Process resume
+    try:
+        result = await resume_parser.process_resume_upload(
+            file_content=file_content,
+            filename=file.filename,
+            profile=profile,
+            db=db,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Resume parsing failed: {e}")
+
+    return {
+        "message": "Resume uploaded and parsed successfully!",
+        "details": result,
+        "profile": _profile_to_response(profile),
+    }
+
+
+@router.get("/resume-status")
+def get_resume_status(db: Session = Depends(get_db)):
+    """Get resume upload status."""
+    profile = _ensure_profile(db)
+    return resume_parser.get_resume_status(profile)
+
+
+@router.get("/resume-search-queries")
+def get_resume_search_queries(db: Session = Depends(get_db)):
+    """
+    Generate smart search queries based on the uploaded resume.
+    Returns a list of {query, location, label} dicts.
+    """
+    profile = _ensure_profile(db)
+
+    if not profile.resume_text:
+        return {
+            "has_resume": False,
+            "queries": [],
+            "message": "Upload your resume first to generate personalized search queries.",
+        }
+
+    queries = resume_parser.generate_search_queries_from_resume(profile)
+
+    return {
+        "has_resume": True,
+        "queries": queries,
+        "skills_used": profile.skills_list if hasattr(profile, 'skills_list') else [],
+        "target_role": profile.target_role,
+        "experience_years": profile.experience_years,
+    }
+
+
 @router.post("/resume-text", response_model=MessageResponse)
 def update_resume_text(resume_text: str, db: Session = Depends(get_db)):
     """Update the parsed resume text (used for AI matching and tailoring)."""
@@ -110,6 +202,27 @@ def update_resume_text(resume_text: str, db: Session = Depends(get_db)):
     profile.updated_at = datetime.now(timezone.utc)
     db.commit()
     return MessageResponse(message="Resume text updated")
+
+
+@router.delete("/resume")
+def delete_resume(db: Session = Depends(get_db)):
+    """Remove uploaded resume and reset resume-related profile fields."""
+    profile = _ensure_profile(db)
+
+    # Delete file if exists
+    if profile.resume_file_path:
+        from pathlib import Path
+        try:
+            Path(profile.resume_file_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    profile.resume_text = None
+    profile.resume_file_path = None
+    profile.updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    return {"message": "Resume removed. Profile fields preserved."}
 
 
 @router.get("/salary-calculator")
