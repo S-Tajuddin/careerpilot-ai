@@ -1,6 +1,8 @@
 """
 CareerPilot AI — Jobs Router
 Job listing, search, scoring, and management endpoints.
+
+Route order matters! Specific paths MUST come before /{job_id} parameterized routes.
 """
 
 import json
@@ -81,6 +83,11 @@ def _job_to_response(job: Job) -> JobResponse:
     )
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# SPECIFIC ROUTES — must come BEFORE /{job_id}
+# ══════════════════════════════════════════════════════════════════════════════
+
+
 @router.get("/", response_model=JobListResponse)
 def list_jobs(
     page: int = Query(1, ge=1, description="Page number"),
@@ -106,7 +113,6 @@ def list_jobs(
 
     # Full-text search using FTS5
     if search:
-        # Use FTS5 for efficient text search
         fts_results = db.execute(
             __import__("sqlalchemy").text(
                 "SELECT rowid FROM jobs_fts WHERE jobs_fts MATCH :query"
@@ -117,7 +123,6 @@ def list_jobs(
         if fts_ids:
             query = query.filter(Job.id.in_(fts_ids))
         else:
-            # No FTS results — try ILIKE fallback
             search_term = f"%{search}%"
             query = query.filter(
                 or_(
@@ -145,24 +150,135 @@ def list_jobs(
     )
 
 
-@router.get("/{job_id}", response_model=JobResponse)
-def get_job(job_id: int, db: Session = Depends(get_db)):
-    """Get a single job by ID."""
-    job = db.query(Job).filter(Job.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-    return _job_to_response(job)
-
-
-@router.post("/search", response_model=JobListResponse)
-async def search_jobs(request: JobSearchRequest, db: Session = Depends(get_db)):
+@router.get("/search", response_model=JobListResponse)
+async def search_jobs_get(
+    query: str = Query(..., description="Job search query, e.g. 'AEM developer'"),
+    location: Optional[str] = Query(None, description="Location, e.g. 'Hyderabad, India'"),
+    country: str = Query("in", description="Country code: in, us, gb, etc."),
+    remote_only: bool = Query(False, description="Remote jobs only"),
+    date_posted: Optional[str] = Query(None, description="Filter: today, 3days, week, month"),
+    max_results: int = Query(20, ge=1, le=100, description="Max results"),
+    db: Session = Depends(get_db),
+):
     """
     Search for jobs using external APIs (JSearch, Adzuna, etc.).
-    Results are saved to the database and returned.
+    Browser-friendly GET version — results are saved to DB and returned.
     """
     from app.services.job_service import job_service
 
-    # Search all configured sources
+    normalized_jobs = await job_service.search_all_sources(
+        query=query,
+        location=location,
+        country=country,
+        remote_only=remote_only,
+        date_posted=date_posted,
+        max_results=max_results,
+        db=db,
+    )
+
+    # Fetch the newly saved jobs from DB
+    search_term = f"%{query}%"
+    db_jobs = db.query(Job).filter(
+        Job.is_active == True,
+        (Job.title.ilike(search_term) | Job.description.ilike(search_term)),
+    ).order_by(Job.created_at.desc()).limit(max_results).all()
+
+    return JobListResponse(
+        total=len(db_jobs),
+        jobs=[_job_to_response(j) for j in db_jobs],
+        page=1,
+        per_page=max_results,
+    )
+
+
+@router.get("/search-by-resume", response_model=dict)
+async def search_jobs_by_resume(
+    max_results_per_query: int = Query(5, ge=1, le=20, description="Max results per search query"),
+    db: Session = Depends(get_db),
+):
+    """
+    Search for jobs using queries auto-generated from your uploaded resume.
+    Runs multiple searches based on your skills, target role, and experience.
+    Results are sorted by match score (resume-prioritized).
+    """
+    from app.models import Profile
+    from app.services.job_service import job_service
+    from app.services.resume_parser import resume_parser
+
+    profile = db.query(Profile).filter(Profile.id == 1).first()
+    if not profile:
+        raise HTTPException(status_code=400, detail="No profile found — create your profile first")
+
+    if not profile.resume_text:
+        return {
+            "has_resume": False,
+            "message": "Upload your resume first to enable resume-based search.",
+            "total": 0,
+            "jobs": [],
+            "queries_used": [],
+        }
+
+    # Generate search queries from resume
+    queries = resume_parser.generate_search_queries_from_resume(profile)
+
+    all_new_job_ids = []
+    queries_used = []
+
+    for q in queries[:6]:  # Limit to 6 queries to stay within API limits
+        try:
+            normalized_jobs = await job_service.search_all_sources(
+                query=q["query"],
+                location=q.get("location", "India") or "India",
+                country="in",
+                remote_only=False,
+                max_results=max_results_per_query,
+                db=db,
+            )
+            queries_used.append({
+                "query": q["query"],
+                "location": q.get("location", "India"),
+                "label": q.get("label", q["query"]),
+                "results": len(normalized_jobs),
+            })
+        except Exception as e:
+            queries_used.append({
+                "query": q["query"],
+                "location": q.get("location", "India"),
+                "label": q.get("label", q["query"]),
+                "results": 0,
+                "error": str(e),
+            })
+
+    # Return top jobs sorted by match score
+    top_jobs = db.query(Job).filter(
+        Job.is_active == True,
+        Job.match_score.isnot(None),
+    ).order_by(Job.match_score.desc()).limit(30).all()
+
+    # If no scored jobs, return newest
+    if not top_jobs:
+        top_jobs = db.query(Job).filter(
+            Job.is_active == True,
+        ).order_by(Job.created_at.desc()).limit(30).all()
+
+    return {
+        "has_resume": True,
+        "total": len(top_jobs),
+        "jobs": [_job_to_response(j) for j in top_jobs],
+        "queries_used": queries_used,
+        "resume_skills": profile.skills_list if hasattr(profile, 'skills_list') else [],
+        "target_role": profile.target_role,
+    }
+
+
+@router.post("/search", response_model=JobListResponse)
+async def search_jobs_post(request: JobSearchRequest, db: Session = Depends(get_db)):
+    """
+    Search for jobs using external APIs (JSearch, Adzuna, etc.).
+    POST version for programmatic use with JobSearchRequest body.
+    """
+    from app.services.job_service import job_service
+
     normalized_jobs = await job_service.search_all_sources(
         query=request.query,
         location=request.location,
@@ -173,8 +289,6 @@ async def search_jobs(request: JobSearchRequest, db: Session = Depends(get_db)):
         db=db,
     )
 
-    # Fetch the newly saved jobs from DB (they now have IDs and match scores)
-    # Get the latest jobs matching this search
     search_term = f"%{request.query}%"
     db_jobs = db.query(Job).filter(
         Job.is_active == True,
@@ -190,39 +304,74 @@ async def search_jobs(request: JobSearchRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/score", response_model=JobResponse)
-def score_job(request: JobScoreRequest, db: Session = Depends(get_db)):
+async def score_job(request: JobScoreRequest, db: Session = Depends(get_db)):
     """
-    Score a job against the user profile using AI.
-    Uses Ollama (background) or Gemini (interactive).
+    Deep score a single job — adds AI recommendations via LLM.
+    Takes ~5-15 seconds per job. For instant scoring, jobs are auto-quick-scored on search.
     """
+    from app.services.scoring import scoring_service
+    from app.models import Profile
+
     job = db.query(Job).filter(Job.id == request.job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {request.job_id} not found")
 
-    if job.match_score is not None and not request.force_rescore:
-        return _job_to_response(job)
+    profile = db.query(Profile).filter(Profile.id == 1).first()
+    if not profile:
+        raise HTTPException(status_code=400, detail="No profile found — create your profile first")
 
-    # Scoring will be implemented in Phase 2 (AI Matching pipeline)
-    # For now, return the job as-is
-    raise HTTPException(
-        status_code=501,
-        detail="AI scoring not yet implemented — coming in Phase 2",
-    )
+    # Always do deep score when explicitly requested
+    result = await scoring_service.deep_score(job, profile, db)
 
-
-@router.delete("/{job_id}", response_model=MessageResponse)
-def deactivate_job(job_id: int, db: Session = Depends(get_db)):
-    """Soft-delete a job (mark as inactive)."""
-    job = db.query(Job).filter(Job.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-
-    job.is_active = False
+    job.match_score = result["overall_score"]
+    job.match_strengths_list = result["strengths"]
+    job.match_weaknesses_list = result["weaknesses"]
+    job.match_recommendations_list = result["recommendations"]
+    if result.get("embedding_id"):
+        job.embedding_id = result["embedding_id"]
     job.updated_at = datetime.now(timezone.utc)
     db.commit()
 
-    _log_activity(db, "job_deactivated", "job", job_id, {"title": job.title})
-    return MessageResponse(message=f"Job '{job.title}' deactivated")
+    _log_activity(db, "job_deep_scored", "job", job.id, {"score": result["overall_score"]})
+    return _job_to_response(job)
+
+
+@router.post("/score/batch")
+async def score_batch_jobs(
+    mode: str = Query("quick", description="Scoring mode: 'quick' (instant) or 'deep' (with AI recommendations)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Score all unscored active jobs.
+    - mode='quick': Instant deterministic scoring (< 1ms per job)
+    - mode='deep': Full AI scoring with LLM recommendations (~5-15s per job)
+    """
+    from app.services.scoring import scoring_service
+
+    if mode == "deep":
+        stats = await scoring_service.deep_score_all_unscored(db)
+    else:
+        stats = scoring_service.quick_score_all_unscored(db)
+
+    return {
+        "message": f"{'Deep' if mode == 'deep' else 'Quick'} scored {stats['scored']}/{stats['total_unscored']} jobs",
+        **stats,
+    }
+
+
+@router.post("/dedup")
+async def dedup_jobs(db: Session = Depends(get_db)):
+    """
+    Run deduplication on active jobs.
+    Uses title+company matching + embedding similarity.
+    """
+    from app.services.dedup import dedup_service
+
+    stats = await dedup_service.dedup_jobs(db)
+    return {
+        "message": f"Found {stats['duplicates_found']} duplicates in {stats['groups_merged']} groups",
+        **stats,
+    }
 
 
 @router.get("/stats/summary")
@@ -236,24 +385,20 @@ def jobs_stats(db: Session = Depends(get_db)):
         Job.is_active == True, Job.match_score.isnot(None)
     ).scalar() or 0
 
-    # By source
     by_source = db.query(
         Job.source, func.count(Job.id)
     ).filter(Job.is_active == True).group_by(Job.source).all()
 
-    # By company (top 10)
     by_company = db.query(
         Job.company_name, func.count(Job.id)
     ).filter(Job.is_active == True).group_by(Job.company_name).order_by(
         desc(func.count(Job.id))
     ).limit(10).all()
 
-    # Remote vs onsite
     remote_count = db.query(func.count(Job.id)).filter(
         Job.is_active == True, Job.is_remote == True
     ).scalar() or 0
 
-    # Applied count
     applied_count = db.query(func.count(Application.id)).filter(
         Application.status.in_(["applied", "interview_scheduled", "interview_done", "offer"])
     ).scalar() or 0
@@ -293,7 +438,64 @@ def get_search_history(
     ]
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# PARAMETERIZED ROUTES — must come LAST
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@router.get("/{job_id}", response_model=JobResponse)
+def get_job(job_id: int, db: Session = Depends(get_db)):
+    """Get a single job by ID."""
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    return _job_to_response(job)
+
+
+@router.get("/{job_id}/score-detail")
+def get_job_score_detail(job_id: int, db: Session = Depends(get_db)):
+    """
+    Get detailed scoring breakdown for a job.
+    Returns overall score + 6 dimension scores + strengths/weaknesses/recommendations.
+    """
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    if job.match_score is None:
+        raise HTTPException(status_code=400, detail="Job not yet scored — POST /api/jobs/score first")
+
+    return {
+        "job_id": job.id,
+        "title": job.title,
+        "company_name": job.company_name,
+        "overall_score": job.match_score,
+        "strengths": job.match_strengths_list,
+        "weaknesses": job.match_weaknesses_list,
+        "recommendations": job.match_recommendations_list,
+        "salary_display": job.salary_display(),
+        "is_remote": job.is_remote,
+        "location": job.location,
+    }
+
+
+@router.delete("/{job_id}", response_model=MessageResponse)
+def deactivate_job(job_id: int, db: Session = Depends(get_db)):
+    """Soft-delete a job (mark as inactive)."""
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    job.is_active = False
+    job.updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+    _log_activity(db, "job_deactivated", "job", job_id, {"title": job.title})
+    return MessageResponse(message=f"Job '{job.title}' deactivated")
+
+
 # ─── Helper Functions ────────────────────────────────────────────────────────
+
 
 def _log_search(db: Session, query: str, location: str, count: int, source: str):
     """Log a search to history."""

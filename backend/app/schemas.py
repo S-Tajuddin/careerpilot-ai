@@ -49,6 +49,7 @@ class ProfileUpdate(ProfileBase):
     preferred_locations: Optional[list[str]] = None
     remote_preference: Optional[str] = None
     notice_period: Optional[str] = None
+    resume_text: Optional[str] = None
 
 
 class ProfileResponse(ProfileBase):
@@ -59,6 +60,27 @@ class ProfileResponse(ProfileBase):
     updated_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
+
+
+class ResumeUploadResponse(BaseModel):
+    """Response after resume upload and parsing."""
+    message: str
+    updated_fields: list[str] = []
+    skills_count: int = 0
+    experience_years: Optional[float] = None
+    current_role: Optional[str] = None
+    target_role: Optional[str] = None
+    resume_text_length: int = 0
+    file_saved: Optional[str] = None
+
+
+class ResumeSearchQueriesResponse(BaseModel):
+    """Response with search queries generated from resume."""
+    has_resume: bool
+    queries: list[dict] = []
+    skills_used: list[str] = []
+    target_role: Optional[str] = None
+    experience_years: Optional[float] = None
 
 
 # ─── Company ────────────────────────────────────────────────────────────────
